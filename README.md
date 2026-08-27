@@ -17,7 +17,7 @@ On the host:
 5. kms and uinput enabled (both should be the default on modern linux systems)
 6. a connected monitor or a hdmi dummy plug
 
-On the clinet:
+On the client:
 
 1. `ssh`
 2. `scrssh`
