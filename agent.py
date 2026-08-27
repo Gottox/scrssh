@@ -1,0 +1,94 @@
+import fcntl
+import os
+import struct
+import subprocess
+import threading
+
+EV_SYN, EV_KEY, EV_REL, EV_ABS = 0x00, 0x01, 0x02, 0x03
+ABS_X, ABS_Y = 0x00, 0x01
+REL_HWHEEL, REL_WHEEL = 0x06, 0x08
+BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
+BUS_VIRTUAL = 0x06
+KEY_ADVERTISE_MAX = 248
+ABS_RANGE_MAX = 65535
+
+FMT_INPUT_ID_SETUP = "@HHHH80sI"
+FMT_ABS_SETUP = "@H2x6i"
+FMT_INPUT_EVENT = "@llHHi"
+FMT_WIRE = "!BBHHi"
+WIRE_SIZE = struct.calcsize(FMT_WIRE)
+
+def ioc(direction, nr, size):
+    return (direction << 30) | (size << 16) | (ord("U") << 8) | nr
+
+UI_DEV_CREATE = ioc(0, 1, 0)
+UI_DEV_SETUP = ioc(1, 3, struct.calcsize(FMT_INPUT_ID_SETUP))
+UI_ABS_SETUP = ioc(1, 4, struct.calcsize(FMT_ABS_SETUP))
+UI_SET_EVBIT = ioc(1, 100, 4)
+UI_SET_KEYBIT = ioc(1, 101, 4)
+UI_SET_RELBIT = ioc(1, 102, 4)
+UI_SET_ABSBIT = ioc(1, 103, 4)
+
+
+def read_exactly(size):
+    data = b""
+    while len(data) < size:
+        chunk = os.read(0, size - len(data))
+        if not chunk:
+            raise EOFError
+        data += chunk
+    return data
+
+
+def create_device(name, product, ev_bits, key_bits, rel_bits, abs_bits):
+    fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
+    for ev in ev_bits:
+        fcntl.ioctl(fd, UI_SET_EVBIT, ev)
+    for key in key_bits:
+        fcntl.ioctl(fd, UI_SET_KEYBIT, key)
+    for rel in rel_bits:
+        fcntl.ioctl(fd, UI_SET_RELBIT, rel)
+    for axis in abs_bits:
+        fcntl.ioctl(fd, UI_SET_ABSBIT, axis)
+        fcntl.ioctl(
+            fd,
+            UI_ABS_SETUP,
+            struct.pack(FMT_ABS_SETUP, axis, 0, 0, ABS_RANGE_MAX, 0, 0, 0),
+        )
+    fcntl.ioctl(
+        fd,
+        UI_DEV_SETUP,
+        struct.pack(
+            FMT_INPUT_ID_SETUP, BUS_VIRTUAL, 0x1D6B, product, 1,
+            name.encode("ascii"), 0,
+        ),
+    )
+    fcntl.ioctl(fd, UI_DEV_CREATE)
+    return fd
+
+
+def forward(fds):
+    try:
+        while True:
+            record = read_exactly(WIRE_SIZE)
+            dev, _pad, typ, code, value = struct.unpack(FMT_WIRE, record)
+            if dev < len(fds):
+                os.write(fds[dev], struct.pack(FMT_INPUT_EVENT, 0, 0, typ, code, value))
+    except EOFError:
+        pass
+
+
+size = struct.unpack("!H", read_exactly(2))[0]
+command = read_exactly(size).decode().split("\0")
+
+fds = (
+    create_device("scrssh keyboard", 0x0001, [EV_KEY, EV_SYN],
+                  range(1, KEY_ADVERTISE_MAX + 1), [], []),
+    create_device("scrssh pointer", 0x0002, [EV_KEY, EV_REL, EV_ABS, EV_SYN],
+                  [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE], [REL_WHEEL, REL_HWHEEL],
+                  [ABS_X, ABS_Y]),
+)
+
+process = subprocess.Popen(command, stdin=subprocess.DEVNULL)
+threading.Thread(target=forward, args=(fds,), daemon=True).start()
+process.wait()
