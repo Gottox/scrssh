@@ -19,6 +19,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#define LENGTH(a) (sizeof(a) / sizeof *(a))
+
 static const char AGENT[] = {
 #include "agent.h"
 };
@@ -92,8 +94,33 @@ ssh_spawn(struct app *app, char **args, int count) {
 }
 
 struct config {
-	const char *device, *crtc, *plane, *fps, *bitrate;
+	const char *device, *crtc, *plane, *fps, *bitrate, *encoder;
 };
+
+static const struct {
+	const char *name, *options[10];
+} encoders[] = {
+		{"h264_vaapi",
+		 {"-vf", "hwmap=derive_device=vaapi,scale_vaapi=format=nv12",
+		  "-rc_mode", "CBR"}},
+		{"libx264",
+		 {"-vf", "hwdownload,format=bgr0", "-preset", "ultrafast", "-tune",
+		  "zerolatency"}},
+		{"h264_nvenc",
+		 {"-vf", "hwdownload,format=bgr0,hwupload_cuda", "-preset", "p1",
+		  "-tune", "ll", "-zerolatency", "1"}},
+		{"h264_v4l2m2m", {"-vf", "hwdownload,format=bgr0"}},
+};
+
+static const char *const *
+encoder_options(const char *name) {
+	for (unsigned i = 0; i < LENGTH(encoders); i++) {
+		if (strcmp(encoders[i].name, name) == 0) {
+			return encoders[i].options;
+		}
+	}
+	die("unknown encoder %s", name);
+}
 
 static void
 put(int fd, const void *data, size_t size) {
@@ -113,7 +140,7 @@ add(struct argv *a, ...) {
 	va_start(list, a);
 	for (const char *word; (word = va_arg(list, const char *));) {
 		unsigned size = strlen(word);
-		assert(a->length + size + 1 <= sizeof a->data);
+		assert(a->length + size + 1 <= LENGTH(a->data));
 		if (a->length) {
 			a->data[a->length++] = '\0';
 		}
@@ -134,15 +161,16 @@ send_command(int fd, const struct config *c) {
 	if (*c->plane) {
 		add(&a, "-plane_id", c->plane, NULL);
 	}
-	add(&a, "-i", "-", "-vf",
-		"hwmap=derive_device=vaapi,scale_vaapi=format=nv12", "-c:v",
-		"h264_vaapi", "-rc_mode", "CBR", "-b:v", c->bitrate, "-maxrate",
-		c->bitrate, NULL);
+	add(&a, "-i", "-", "-c:v", c->encoder, NULL);
+	for (const char *const *o = encoder_options(c->encoder); *o; o++) {
+		add(&a, *o, NULL);
+	}
+	add(&a, "-b:v", c->bitrate, "-maxrate", c->bitrate, NULL);
 	add(&a, "-g", "60", "-bf", "0", "-f", "mpegts", "-flush_packets", "1",
 		"-muxdelay", "0", "-muxpreload", "0", "pipe:1", NULL);
 
-	char header[2] = {(char)(a.length >> 8), (char)a.length};
-	put(fd, header, sizeof header);
+	uint16_t header = htons(a.length);
+	put(fd, &header, sizeof header);
 	put(fd, a.data, a.length);
 }
 
@@ -554,6 +582,8 @@ usage(FILE *out) {
 		  "  -p <N>     capture a specific plane\n"
 		  "  -f <N>     capture frame rate         [default: 30]\n"
 		  "  -b <RATE>  capped bitrate             [default: 15M]\n"
+		  "  -e <NAME>  h264_vaapi (default), h264_nvenc, h264_v4l2m2m,\n"
+		  "             libx264\n"
 		  "  -h         show this help\n",
 		  out);
 }
@@ -566,9 +596,10 @@ main(int argc, char **argv) {
 			.plane = "",
 			.fps = "30",
 			.bitrate = "15M",
+			.encoder = "h264_vaapi",
 	};
 
-	for (int option; (option = getopt(argc, argv, "+d:c:p:f:b:h")) != -1;) {
+	for (int option; (option = getopt(argc, argv, "+d:c:p:f:b:e:h")) != -1;) {
 		switch (option) {
 		case 'd':
 			config.device = optarg;
@@ -584,6 +615,9 @@ main(int argc, char **argv) {
 			break;
 		case 'b':
 			config.bitrate = optarg;
+			break;
+		case 'e':
+			config.encoder = optarg;
 			break;
 		default:
 			usage(stderr);
