@@ -28,17 +28,27 @@ scrssh [options] [--] <ssh arguments...>
 
 # Encoders
 
-`-e` picks the ffmpeg encoder:
+The host picks the encoder itself. It captures a single frame with all of
+them at once and keeps the first that works:
 
-* `h264_vaapi`: AMD and Intel. The default.
+* `h264_vaapi`: AMD and Intel.
 * `h264_nvenc`: NVIDIA with the proprietary driver.
 * `h264_v4l2m2m`: Raspberry Pi 4 and CM4.
 * `libx264`: software, for everything else including the Pi 5.
 
-For example on the rpi4:
+The dry runs are concurrent, so the search costs about one encoder start,
+and `libx264` is accepted untested, so it never fails on a host with a
+normal ffmpeg.
+`-e` forces one encoder and skips the search:
 
 ```bash
-scrssh -d /dev/dri/card1 -e h264_v4l2m2m user@raspberrypi sudo
+scrssh -e libx264 user@example.com
+```
+
+The DRM device is not detected, so the rpi4 still needs the right `-d`:
+
+```bash
+scrssh -d /dev/dri/card1 user@raspberrypi sudo
 ```
 
 Usage Examples

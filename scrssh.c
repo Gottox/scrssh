@@ -1,5 +1,4 @@
 #include <SDL3/SDL.h>
-#include <assert.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 
@@ -97,32 +96,6 @@ struct config {
 	const char *device, *crtc, *plane, *fps, *bitrate, *encoder;
 };
 
-static const struct {
-	const char *name, *options[10];
-} encoders[] = {
-		{"h264_vaapi",
-		 {"-vf", "hwmap=derive_device=vaapi,scale_vaapi=format=nv12",
-		  "-rc_mode", "CBR"}},
-		{"libx264",
-		 {"-vf", "hwdownload,format=bgr0", "-preset", "ultrafast", "-tune",
-		  "zerolatency"}},
-		{"h264_nvenc",
-		 {"-vf", "hwdownload,format=bgr0,hwupload_cuda", "-preset", "p1",
-		  "-tune", "ll", "-zerolatency", "1"}},
-		{"h264_v4l2m2m", {"-vf", "hwdownload,format=bgr0"}},
-};
-
-static const char *const *
-encoder_options(const char *name) {
-	for (unsigned i = 0; i < LENGTH(encoders); i++) {
-		if (strcmp(encoders[i].name, name) == 0) {
-			return encoders[i].options;
-		}
-	}
-	die("unknown encoder %s", name);
-	return NULL;
-}
-
 static void
 put(int fd, const void *data, size_t size) {
 	if (write(fd, data, size) != (ssize_t)size) {
@@ -130,49 +103,29 @@ put(int fd, const void *data, size_t size) {
 	}
 }
 
-struct argv {
-	char data[1024];
-	unsigned length;
-};
-
-static void
-add(struct argv *a, ...) {
-	va_list list;
-	va_start(list, a);
-	for (const char *word; (word = va_arg(list, const char *));) {
-		unsigned size = strlen(word);
-		assert(a->length + size + 1 <= LENGTH(a->data));
-		if (a->length) {
-			a->data[a->length++] = '\0';
-		}
-		memcpy(a->data + a->length, word, size);
-		a->length += size;
-	}
-	va_end(list);
-}
-
+/* The agent turns this into an ffmpeg command line, so that it can pick an
+   encoder that the host actually has. An empty field means "unset". */
 static void
 send_command(int fd, const struct config *c) {
-	struct argv a = {0};
-	add(&a, "ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "kmsgrab",
-		"-device", c->device, "-framerate", c->fps, NULL);
-	if (*c->crtc) {
-		add(&a, "-crtc_id", c->crtc, NULL);
-	}
-	if (*c->plane) {
-		add(&a, "-plane_id", c->plane, NULL);
-	}
-	add(&a, "-i", "-", "-c:v", c->encoder, NULL);
-	for (const char *const *o = encoder_options(c->encoder); *o; o++) {
-		add(&a, *o, NULL);
-	}
-	add(&a, "-b:v", c->bitrate, "-maxrate", c->bitrate, NULL);
-	add(&a, "-g", "60", "-bf", "0", "-f", "mpegts", "-flush_packets", "1",
-		"-muxdelay", "0", "-muxpreload", "0", "pipe:1", NULL);
+	const char *fields[] = {c->device, c->crtc,    c->plane,
+							c->fps,    c->bitrate, c->encoder};
 
-	uint16_t header = htons(a.length);
+	size_t length = LENGTH(fields) - 1;
+	for (unsigned i = 0; i < LENGTH(fields); i++) {
+		length += strlen(fields[i]);
+	}
+	if (length > UINT16_MAX) {
+		die("the capture configuration is too long");
+	}
+
+	uint16_t header = htons((uint16_t)length);
 	put(fd, &header, sizeof header);
-	put(fd, a.data, a.length);
+	for (unsigned i = 0; i < LENGTH(fields); i++) {
+		if (i) {
+			put(fd, "\0", 1);
+		}
+		put(fd, fields[i], strlen(fields[i]));
+	}
 }
 
 #define AVIO_BUFFER 65536
@@ -583,8 +536,8 @@ usage(FILE *out) {
 		  "  -p <N>     capture a specific plane\n"
 		  "  -f <N>     capture frame rate         [default: 30]\n"
 		  "  -b <RATE>  capped bitrate             [default: 15M]\n"
-		  "  -e <NAME>  h264_vaapi (default), h264_nvenc, h264_v4l2m2m,\n"
-		  "             libx264\n"
+		  "  -e <NAME>  force an encoder           [default: ask the host]\n"
+		  "             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264\n"
 		  "  -h         show this help\n",
 		  out);
 }
@@ -597,7 +550,7 @@ main(int argc, char **argv) {
 			.plane = "",
 			.fps = "30",
 			.bitrate = "15M",
-			.encoder = "h264_vaapi",
+			.encoder = "",
 	};
 
 	for (int option; (option = getopt(argc, argv, "+d:c:p:f:b:e:h")) != -1;) {

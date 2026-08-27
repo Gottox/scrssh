@@ -78,8 +78,53 @@ def forward(fds):
         pass
 
 
+ENCODERS = (
+    ("h264_vaapi", ["-vf", "hwmap=derive_device=vaapi,scale_vaapi=format=nv12",
+                    "-rc_mode", "CBR"]),
+    ("h264_nvenc", ["-vf", "hwdownload,format=bgr0,hwupload_cuda",
+                    "-preset", "p1", "-tune", "ll", "-zerolatency", "1"]),
+    ("h264_v4l2m2m", ["-vf", "hwdownload,format=bgr0"]),
+    ("libx264", ["-vf", "hwdownload,format=bgr0", "-preset", "ultrafast",
+                 "-tune", "zerolatency"]),
+)
+
+
+def command(encoder, options, probe):
+    return (
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "kmsgrab",
+         "-device", device, "-framerate", fps]
+        + (["-crtc_id", crtc] if crtc else [])
+        + (["-plane_id", plane] if plane else [])
+        + ["-i", "-", "-c:v", encoder] + options
+        + ["-b:v", bitrate, "-maxrate", bitrate, "-g", "60", "-bf", "0"]
+        + (["-frames:v", "1"] if probe else [])
+        + ["-f", "mpegts", "-flush_packets", "1", "-muxdelay", "0",
+           "-muxpreload", "0", "pipe:1"]
+    )
+
+
+def choose(candidates):
+    probes = [
+        subprocess.Popen(command(name, options, True),
+                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL)
+        for name, options in candidates[:-1]
+    ]
+    works = [bool(probe.communicate()[0]) for probe in probes]
+    for candidate, ok in zip(candidates, works):
+        if ok:
+            return candidate
+    return candidates[-1]
+
+
 size = struct.unpack("!H", read_exactly(2))[0]
-command = read_exactly(size).decode().split("\0")
+device, crtc, plane, fps, bitrate, encoder = (
+    read_exactly(size).decode().split("\0")
+)
+
+candidates = [e for e in ENCODERS if not encoder or e[0] == encoder]
+if not candidates:
+    raise SystemExit("unknown encoder " + encoder)
 
 fds = (
     create_device("scrssh keyboard", 0x0001, [EV_KEY, EV_SYN],
@@ -89,6 +134,9 @@ fds = (
                   [ABS_X, ABS_Y]),
 )
 
-process = subprocess.Popen(command, stdin=subprocess.DEVNULL)
 threading.Thread(target=forward, args=(fds,), daemon=True).start()
+
+name, options = choose(candidates)
+process = subprocess.Popen(
+    command(name, options, False), stdin=subprocess.DEVNULL)
 process.wait()
