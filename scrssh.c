@@ -120,6 +120,7 @@ encoder_options(const char *name) {
 		}
 	}
 	die("unknown encoder %s", name);
+	return NULL;
 }
 
 static void
