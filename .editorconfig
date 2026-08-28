@@ -10,6 +10,6 @@ indent_size = 4
 [meson.build]
 indent_style = space
 
-[*.yaml]
-indent_size = 2
+[*.py]
+indent_size = 4
 indent_style = space
