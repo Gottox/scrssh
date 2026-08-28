@@ -11,7 +11,7 @@ Works even on the Raspberry Pi 2:
 ![Raspberry Pi 2](./rpi2.jpg)
 
 scrssh lets you interact with remote desktops and servers
-over SSH. No remote configuration needed.
+over SSH. No remote setup needed.
 
 # Requirements
 
