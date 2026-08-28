@@ -4,6 +4,7 @@ Viable TeamViewer/RustDesk alternative for Linux in under 1000 lines of C.
 `scrcpy` for the linux admin.
 
 Works on Bazzite:
+
 ![Bazzite](./bazzite.jpg)
 
 Works even on the Raspberry Pi 2:
