@@ -530,7 +530,7 @@ int
 main(int argc, char **argv) {
 	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
-	for (int o; (o = getopt(argc, argv, "+d:c:p:f:b:e:h")) != -1;) {
+	for (int o; (o = getopt(argc, argv, "+d:C:P:f:B:e:h")) != -1;) {
 		switch (o) {
 #define OPT(c, v) \
 	case c: \
