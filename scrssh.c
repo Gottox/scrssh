@@ -288,10 +288,12 @@ to_evdev(SDL_Scancode scancode) {
 static uint16_t
 to_button(Uint8 button) {
 	switch (button) {
-#define DEF(sdl, ev) \
-	case SDL_BUTTON_##sdl: \
-		return BTN_##ev;
-#include "buttons.h"
+#define DEF(b) \
+	case SDL_BUTTON_##b: \
+		return BTN_##b;
+DEF(LEFT)
+DEF(MIDDLE)
+DEF(RIGHT)
 #undef DEF
 	default:
 		return 0;
