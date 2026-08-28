@@ -35,6 +35,7 @@ die(const char *fmt, ...) {
 }
 
 struct app {
+	char title[256];
 	pid_t child;
 	int input_fd;
 	int video_fd;
@@ -291,9 +292,9 @@ to_button(Uint8 button) {
 #define DEF(b) \
 	case SDL_BUTTON_##b: \
 		return BTN_##b;
-DEF(LEFT)
-DEF(MIDDLE)
-DEF(RIGHT)
+		DEF(LEFT)
+		DEF(MIDDLE)
+		DEF(RIGHT)
 #undef DEF
 	default:
 		return 0;
@@ -389,7 +390,7 @@ retexture(struct app *app) {
 
 		SDL_Window *window;
 		if (!SDL_CreateWindowAndRenderer(
-					"scrssh", window_w, window_h,
+					app->title, window_w, window_h,
 					SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY,
 					&window, &app->renderer)) {
 			die("could not create the window: %s", SDL_GetError());
@@ -513,6 +514,19 @@ out:
 }
 
 static void
+set_title(struct app *app, char **argv, size_t argc) {
+	app->title[0] = 0;
+	for (size_t i = 0; i < argc; i++) {
+		if (sizeof(app->title) > strlen(app->title) + strlen(argv[i]) + 1) {
+			if (i) {
+				strcat(app->title, " ");
+			}
+			strcat(app->title, argv[i]);
+		}
+	}
+}
+
+static void
 usage(void) {
 	fputs("usage: scrssh [options] [--] <ssh arguments...>\n"
 		  "\n"
@@ -559,6 +573,8 @@ main(int argc, char **argv) {
 
 	struct app app = {0};
 	ssh_spawn(&app, argv + optind, argc - optind);
+	set_title(&app, argv + optind, argc - optind);
+
 	send_config(app.input_fd, config);
 	fcntl(app.input_fd, F_SETFL, O_NONBLOCK);
 

@@ -1,13 +1,13 @@
 # scrssh
 
-Viable TeamViewer/RustDesk alternative for Linux.
+Viable TeamViewer/RustDesk alternative for Linux in under 1000 lines of C.
 `scrcpy` for the linux admin.
 
-![Screenshot](./screenshot.jpg)
+![Bazzite](./bazzite.jpg)
+![Raspberry Pi 2](./rpi2.jpg)
 
 scrssh lets you interact with remote desktops and servers
-over SSH. No remote daemon besides ssh needed. No need
-to have a graphical environment on the remote machine.
+over SSH. No remote configuration needed.
 
 # Requirements
 
@@ -16,7 +16,7 @@ On the host:
 2. CAP_SYS_ADMIN on the target
 3. a hardware H.264 encoder (see Encoders), or enough CPU for software
 4. ffmpeg and python installed
-5. kms and uinput enabled (both should be the default on modern linux systems)
+5. kms and uinput available (both should be the default on modern linux systems)
 6. a connected monitor or a hdmi dummy plug
 
 On the client:

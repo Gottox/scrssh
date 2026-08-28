@@ -128,7 +128,7 @@ device, crtc, plane, fps, bitrate, encoder, _ = (
 )
 
 candidates = [
-	(name, [option.replace("%s", download) for option in options])
+	(name, [option.replace("%s", download + ",format=yuv420p") for option in options])
 	for name, options in ENCODERS
 	if not encoder or name == encoder
 	for download in (DOWNLOADS if any("%s" in o for o in options) else ("",))
