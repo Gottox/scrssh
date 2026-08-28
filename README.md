@@ -96,3 +96,10 @@ PermissionError: [Errno 13] Permission denied: '/dev/uinput'
 ```
 
 The remote host doesn not have permissions for uinput. scrssh needs to *write* to `/dev/uinput`. It also needs `CAP_SYS_ADMIN` to capture the screen.
+
+```
+[in#0 @ 0x560f3e28ff80] Framebuffer pixel format 30334241 is not a known supported format.
+[in#0 @ 0x560f3e28fc80] Error opening input: Invalid argument
+```
+
+Disable HDR on the remote host.
