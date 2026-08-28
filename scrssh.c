@@ -160,6 +160,29 @@ publish(const struct app *app, AVFrame *decoded) {
 	}
 }
 
+static bool
+decode_packet(
+		const struct app *app, AVCodecContext *decoder, int stream,
+		AVPacket *packet, AVFrame *decoded) {
+	if (packet->stream_index != stream ||
+		avcodec_send_packet(decoder, packet) < 0) {
+		return true;
+	}
+
+	while (avcodec_receive_frame(decoder, decoded) >= 0) {
+		if (decoded->format != AV_PIX_FMT_YUV420P) {
+			decoder_failed(
+					app,
+					"the remote sent a pixel format scrssh cannot show; "
+					"kmsgrab and VAAPI produce 8-bit 4:2:0");
+			return false;
+		}
+		publish(app, decoded);
+	}
+
+	return true;
+}
+
 static void *
 decode(void *arg) {
 	const struct app *app = arg;
@@ -216,21 +239,11 @@ decode(void *arg) {
 	}
 
 	while (av_read_frame(format, packet) >= 0) {
-		if (packet->stream_index == stream &&
-			avcodec_send_packet(decoder, packet) >= 0) {
-			while (avcodec_receive_frame(decoder, decoded) >= 0) {
-				if (decoded->format != AV_PIX_FMT_YUV420P) {
-					decoder_failed(
-							app,
-							"the remote sent a pixel format scrssh cannot "
-							"show; kmsgrab and VAAPI produce 8-bit 4:2:0");
-					av_packet_unref(packet);
-					goto done;
-				}
-				publish(app, decoded);
-			}
-		}
+		bool more = decode_packet(app, decoder, stream, packet, decoded);
 		av_packet_unref(packet);
+		if (!more) {
+			goto done;
+		}
 	}
 
 	decoder_failed(app, "the remote video stream ended");
