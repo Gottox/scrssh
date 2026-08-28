@@ -38,14 +38,8 @@ def read_exactly(size):
 		data += chunk
 	return data
 
-def open_uinput():
-	try:
-		return os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
-	except FileNotFoundError:
-		subprocess.run(["modprobe", "uinput"])
-		return os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
-
 def create_device(name, product, ev_bits, key_bits, rel_bits, abs_bits):
+	subprocess.run(["modprobe", "uinput"])
 	fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
 	for ev in ev_bits:
 		fcntl.ioctl(fd, UI_SET_EVBIT, ev)
