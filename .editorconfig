@@ -9,7 +9,3 @@ indent_size = 4
 
 [meson.build]
 indent_style = space
-
-[*.py]
-indent_size = 4
-indent_style = space
