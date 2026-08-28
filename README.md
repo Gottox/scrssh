@@ -3,6 +3,8 @@
 Viable TeamViewer/RustDesk alternative for Linux.
 `scrcpy` for the linux admin.
 
+![Screenshot](./screenshot.jpg)
+
 scrssh lets you interact with remote desktops and servers
 over SSH. No remote daemon besides ssh needed. No need
 to have a graphical environment on the remote machine.
