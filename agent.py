@@ -39,7 +39,7 @@ def read_exactly(size):
 	return data
 
 def create_device(name, product, ev_bits, key_bits, rel_bits, abs_bits):
-	subprocess.run(["modprobe", "uinput"])
+	subprocess.run(["modprobe", "uinput"], env={"PATH": "/sbin:/usr/sbin:/bin:/usr/bin"})
 	fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
 	for ev in ev_bits:
 		fcntl.ioctl(fd, UI_SET_EVBIT, ev)

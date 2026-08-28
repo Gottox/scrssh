@@ -3,7 +3,11 @@
 Viable TeamViewer/RustDesk alternative for Linux in under 1000 lines of C.
 `scrcpy` for the linux admin.
 
+Works on Bazzite:
 ![Bazzite](./bazzite.jpg)
+
+Works even on the Raspberry Pi 2:
+
 ![Raspberry Pi 2](./rpi2.jpg)
 
 scrssh lets you interact with remote desktops and servers
@@ -75,3 +79,20 @@ Please note, that it only works with passwordless sudo.
 ```bash
 scrssh -- -p 2222 user@example.com sudo
 ```
+
+# Troubleshooting
+
+```
+sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
+sudo: a password is required
+[mpegts @ 0x7f1ed4010940] Could not detect TS packet size, defaulting to non-FEC/DVHS
+the remote stream contains no video
+```
+
+Currently scrssh can't handle passwords with sudo. either add `NOPASSWD:` to your /etc/sudoers for the user, or login as root directly.
+
+```
+PermissionError: [Errno 13] Permission denied: '/dev/uinput'
+```
+
+The remote host doesn not have permissions for uinput. scrssh needs to *write* to `/dev/uinput`. It also needs `CAP_SYS_ADMIN` to capture the screen.
