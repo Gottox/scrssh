@@ -29,7 +29,6 @@ UI_SET_KEYBIT = ioc(1, 101, 4)
 UI_SET_RELBIT = ioc(1, 102, 4)
 UI_SET_ABSBIT = ioc(1, 103, 4)
 
-
 def read_exactly(size):
     data = b""
     while len(data) < size:
@@ -38,7 +37,6 @@ def read_exactly(size):
             raise EOFError
         data += chunk
     return data
-
 
 def create_device(name, product, ev_bits, key_bits, rel_bits, abs_bits):
     fd = os.open("/dev/uinput", os.O_WRONLY | os.O_NONBLOCK)
@@ -66,7 +64,6 @@ def create_device(name, product, ev_bits, key_bits, rel_bits, abs_bits):
     fcntl.ioctl(fd, UI_DEV_CREATE)
     return fd
 
-
 def forward(fds):
     try:
         while True:
@@ -77,17 +74,23 @@ def forward(fds):
     except EOFError:
         pass
 
+DOWNLOADS = (
+    "hwmap=derive_device=vaapi,scale_vaapi=format=nv12,hwdownload,format=nv12",
+    "hwdownload,format=bgra",
+    "hwdownload,format=rgb0",
+    "hwdownload,format=rgba",
+    "hwdownload,format=bgr0",
+)
 
 ENCODERS = (
     ("h264_vaapi", ["-vf", "hwmap=derive_device=vaapi,scale_vaapi=format=nv12",
                     "-rc_mode", "CBR"]),
-    ("h264_nvenc", ["-vf", "hwdownload,format=bgr0,hwupload_cuda",
+    ("h264_nvenc", ["-vf", "%s,hwupload_cuda",
                     "-preset", "p1", "-tune", "ll", "-zerolatency", "1"]),
-    ("h264_v4l2m2m", ["-vf", "hwdownload,format=bgr0"]),
-    ("libx264", ["-vf", "hwdownload,format=bgr0", "-preset", "ultrafast",
+    ("h264_v4l2m2m", ["-vf", "%s"]),
+    ("libx264", ["-vf", "%s", "-preset", "ultrafast",
                  "-tune", "zerolatency"]),
 )
-
 
 def command(encoder, options, probe):
     return (
@@ -102,7 +105,6 @@ def command(encoder, options, probe):
            "-muxpreload", "0", "pipe:1"]
     )
 
-
 def choose(candidates):
     probes = [
         subprocess.Popen(command(name, options, True),
@@ -110,19 +112,26 @@ def choose(candidates):
                          stderr=subprocess.DEVNULL)
         for name, options in candidates[:-1]
     ]
-    works = [bool(probe.communicate()[0]) for probe in probes]
-    for candidate, ok in zip(candidates, works):
-        if ok:
-            return candidate
-    return candidates[-1]
-
+    chosen = candidates[-1]
+    for candidate in candidates[:-1]:
+        if probes.pop(0).communicate()[0]:
+            chosen = candidate
+            break
+    for probe in probes:
+        probe.kill()
+    return chosen
 
 size = struct.unpack("!H", read_exactly(2))[0]
-device, crtc, plane, fps, bitrate, encoder = (
+device, crtc, plane, fps, bitrate, encoder, _ = (
     read_exactly(size).decode().split("\0")
 )
 
-candidates = [e for e in ENCODERS if not encoder or e[0] == encoder]
+candidates = [
+    (name, [option.replace("%s", download) for option in options])
+    for name, options in ENCODERS
+    if not encoder or name == encoder
+    for download in (DOWNLOADS if any("%s" in o for o in options) else ("",))
+]
 if not candidates:
     raise SystemExit("unknown encoder " + encoder)
 

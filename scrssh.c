@@ -6,7 +6,6 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/input-event-codes.h>
-#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -19,6 +18,7 @@
 #include <unistd.h>
 
 #define LENGTH(a) (sizeof(a) / sizeof *(a))
+#define AVIO_BUFFER 65536
 
 static const char AGENT[] = {
 #include "agent.h"
@@ -47,20 +47,16 @@ struct app {
 };
 
 static void
-ssh_spawn(struct app *app, char **args, int count) {
-	char **argv = calloc((size_t)count + 6, sizeof *argv);
-	if (!argv) {
+ssh_spawn(struct app *app, char **argv, size_t argc) {
+	static const char *post_argv[] = {"python3 -u -c", AGENT, NULL};
+
+	char **exec_argv = calloc(argc + LENGTH(post_argv) + 1, sizeof(char *));
+	if (!exec_argv) {
 		die("out of memory");
 	}
-	argv[0] = (char *)"ssh";
-	for (int i = 0; i < count; i++) {
-		argv[i + 1] = args[i];
-	}
-	argv[count + 1] = (char *)"python3";
-	argv[count + 2] = (char *)"-u";
-	argv[count + 3] = (char *)"-c";
-	argv[count + 4] = (char *)AGENT;
-	argv[count + 5] = NULL;
+	exec_argv[0] = "ssh";
+	memcpy(&exec_argv[1], argv, argc * sizeof(char *));
+	memcpy(&exec_argv[argc + 1], post_argv, sizeof(post_argv));
 
 	int pin[2], pout[2];
 	if (pipe(pin) < 0 || pipe(pout) < 0) {
@@ -70,21 +66,20 @@ ssh_spawn(struct app *app, char **args, int count) {
 	pid_t pid = fork();
 	if (pid < 0) {
 		die("could not fork: %s", strerror(errno));
-	}
-	if (pid == 0) {
+	} else if (pid == 0) {
 		dup2(pin[0], STDIN_FILENO);
 		dup2(pout[1], STDOUT_FILENO);
-		for (int i = 0; i < 2; i++) {
+		for (size_t i = 0; i < 2; i++) {
 			close(pin[i]);
 			close(pout[i]);
 		}
-		execvp("ssh", argv);
+		execvp("ssh", exec_argv);
 		fprintf(stderr,
 				"no `ssh` on PATH; scrssh uses the system OpenSSH client\n");
 		_exit(127);
 	}
 
-	free(argv);
+	free(exec_argv);
 	close(pin[0]);
 	close(pout[1]);
 	app->input_fd = pin[1];
@@ -92,8 +87,14 @@ ssh_spawn(struct app *app, char **args, int count) {
 	app->child = pid;
 }
 
-struct config {
-	const char *device, *crtc, *plane, *fps, *bitrate, *encoder;
+enum CONFIG {
+	CONFIG_DEVICE,
+	CONFIG_CRTC,
+	CONFIG_PLANE,
+	CONFIG_FPS,
+	CONFIG_BITRATE,
+	CONFIG_ENCODER,
+	CONFIG_COUNT,
 };
 
 static void
@@ -103,32 +104,22 @@ put(int fd, const void *data, size_t size) {
 	}
 }
 
-/* The agent turns this into an ffmpeg command line, so that it can pick an
-   encoder that the host actually has. An empty field means "unset". */
 static void
-send_command(int fd, const struct config *c) {
-	const char *fields[] = {c->device, c->crtc,    c->plane,
-							c->fps,    c->bitrate, c->encoder};
-
-	size_t length = LENGTH(fields) - 1;
-	for (unsigned i = 0; i < LENGTH(fields); i++) {
-		length += strlen(fields[i]);
+send_config(int fd, const char **config) {
+	size_t length = 0;
+	for (size_t i = 0; i < CONFIG_COUNT; i++) {
+		length += strlen(config[i]) + 1;
 	}
 	if (length > UINT16_MAX) {
 		die("the capture configuration is too long");
 	}
 
-	uint16_t header = htons((uint16_t)length);
+	uint16_t header = htons(length);
 	put(fd, &header, sizeof header);
-	for (unsigned i = 0; i < LENGTH(fields); i++) {
-		if (i) {
-			put(fd, "\0", 1);
-		}
-		put(fd, fields[i], strlen(fields[i]));
+	for (size_t i = 0; i < CONFIG_COUNT; i++) {
+		put(fd, config[i], strlen(config[i]) + 1);
 	}
 }
-
-#define AVIO_BUFFER 65536
 
 static int
 read_stream(void *opaque, uint8_t *buffer, int size) {
@@ -258,7 +249,7 @@ enum { DEV_KEYBOARD, DEV_POINTER };
 
 #define ABS_RANGE_MAX 65535
 
-struct wire {
+struct ev {
 	uint8_t device;
 	uint8_t pad;
 	uint16_t type;
@@ -266,29 +257,19 @@ struct wire {
 	int32_t value;
 } __attribute__((packed));
 
-_Static_assert(sizeof(struct wire) == 10, "the wire record must not be padded");
+_Static_assert(sizeof(struct ev) == 10, "the wire record must not be padded");
 
 static void
-send_input(struct app *app, struct wire *events, int n) {
-	if (app->input_fd < 0) {
-		return;
-	}
-	struct pollfd pfd = {.fd = app->input_fd, .events = POLLOUT};
-	if (poll(&pfd, 1, 0) != 1 || !(pfd.revents & POLLOUT)) {
-		return;
-	}
-
-	events[n] = (struct wire){.device = events[n - 1].device, .type = EV_SYN};
-	for (int i = 0; i <= n; i++) {
-		events[i].type = htons(events[i].type);
-		events[i].code = htons(events[i].code);
-		events[i].value = (int32_t)htonl((uint32_t)events[i].value);
+send_input(struct app *app, struct ev *ev, size_t ev_count) {
+	ev[ev_count - 1].device = ev[ev_count - 2].device;
+	ev[ev_count - 1].type = EV_SYN;
+	for (size_t i = 0; i < ev_count; i++) {
+		ev[i].type = htons(ev[i].type);
+		ev[i].code = htons(ev[i].code);
+		ev[i].value = htonl(ev[i].value);
 	}
 
-	size_t length = (size_t)(n + 1) * sizeof *events;
-	if (write(app->input_fd, events, length) < 0) {
-		app->input_fd = -1;
-	}
+	write(app->input_fd, ev, ev_count * sizeof *ev);
 }
 
 static uint16_t
@@ -333,7 +314,7 @@ fit(int window_w, int window_h, int video_w, int video_h) {
 }
 
 static int32_t
-to_abs(int value, int origin, int extent) {
+to_abs(float value, int origin, int extent) {
 	long offset = value - origin;
 	if (extent <= 0 || offset <= 0) {
 		return 0;
@@ -344,8 +325,6 @@ to_abs(int value, int origin, int extent) {
 	return (int32_t)((offset * ABS_RANGE_MAX + extent / 2) / extent);
 }
 
-/* Where the video sits in the window right now. Both the renderer output and
-   the texture know their own size, so nothing has to be remembered. */
 static SDL_Rect
 layout(const struct app *app) {
 	int output_w = 0, output_h = 0;
@@ -358,13 +337,13 @@ layout(const struct app *app) {
 }
 
 static void
-send_pointer(struct app *app, int x, int y) {
+send_pointer(struct app *app, float x, float y) {
 	SDL_Rect box = layout(app);
-	struct wire move[3] = {
+	struct ev move[3] = {
 			{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(x, box.x, box.w)},
 			{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(y, box.y, box.h)},
 	};
-	send_input(app, move, 2);
+	send_input(app, move, LENGTH(move));
 }
 
 static void
@@ -384,6 +363,10 @@ initial_size(int *width, int *height) {
 
 static void
 redraw(const struct app *app) {
+	if (SDL_HasEvent(app->wake) || SDL_HasEvent(SDL_EVENT_WINDOW_RESIZED) ||
+		SDL_HasEvent(SDL_EVENT_QUIT)) {
+		return;
+	}
 	SDL_Rect box = layout(app);
 	SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 255);
 	SDL_RenderClear(app->renderer);
@@ -396,16 +379,29 @@ redraw(const struct app *app) {
 }
 
 static void
-retexture(struct app *app, int w, int h) {
+retexture(struct app *app) {
+	int w = app->frame->width, h = app->frame->height;
+	if (!app->renderer) {
+		int window_w = w, window_h = h;
+		initial_size(&window_w, &window_h);
+
+		SDL_Window *window;
+		if (!SDL_CreateWindowAndRenderer(
+					"scrssh", window_w, window_h,
+					SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY,
+					&window, &app->renderer)) {
+			die("could not create the window: %s", SDL_GetError());
+		}
+	}
 	float have_w = 0, have_h = 0;
 	if (app->texture) {
 		SDL_GetTextureSize(app->texture, &have_w, &have_h);
 	}
+
 	if ((int)have_w == w && (int)have_h == h) {
 		return;
 	}
 
-	bool first = !app->texture;
 	SDL_DestroyTexture(app->texture);
 	app->texture = SDL_CreateTexture(
 			app->renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, w,
@@ -414,21 +410,6 @@ retexture(struct app *app, int w, int h) {
 		die("could not create the video texture: %s", SDL_GetError());
 	}
 	SDL_SetTextureScaleMode(app->texture, SDL_SCALEMODE_LINEAR);
-
-	if (first) {
-		initial_size(&w, &h);
-		SDL_SetWindowSize(SDL_GetRenderWindow(app->renderer), w, h);
-	}
-}
-
-static void
-show(struct app *app) {
-	retexture(app, app->frame->width, app->frame->height);
-	SDL_UpdateYUVTexture(
-			app->texture, NULL, app->frame->data[0], app->frame->linesize[0],
-			app->frame->data[1], app->frame->linesize[1], app->frame->data[2],
-			app->frame->linesize[2]);
-	redraw(app);
 }
 
 static void
@@ -438,21 +419,15 @@ ui_run(struct app *app) {
 	}
 	app->wake = SDL_RegisterEvents(1);
 
-	SDL_Window *window;
-	if (!SDL_CreateWindowAndRenderer(
-				"scrssh", 320, 200,
-				SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY, &window,
-				&app->renderer)) {
-		die("could not create the window: %s", SDL_GetError());
-	}
-
 	if (pthread_create(&app->decoder, NULL, decode, app) != 0) {
 		die("could not start the decoder thread");
 	}
 
 	SDL_Event event;
 	while (SDL_WaitEvent(&event)) {
-		SDL_ConvertEventToRenderCoordinates(app->renderer, &event);
+		if (app->renderer) {
+			SDL_ConvertEventToRenderCoordinates(app->renderer, &event);
+		}
 		switch (event.type) {
 		case SDL_EVENT_QUIT:
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
@@ -466,14 +441,14 @@ ui_run(struct app *app) {
 			if (event.key.repeat) {
 				break;
 			}
-			struct wire key[2] = {
+			struct ev key[2] = {
 					{DEV_KEYBOARD, 0, EV_KEY, to_evdev(event.key.scancode),
 					 event.type == SDL_EVENT_KEY_DOWN}};
-			send_input(app, key, 1);
+			send_input(app, key, LENGTH(key));
 			break;
 		}
 		case SDL_EVENT_MOUSE_MOTION:
-			send_pointer(app, (int)event.motion.x, (int)event.motion.y);
+			send_pointer(app, event.motion.x, event.motion.y);
 			break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP: {
@@ -481,19 +456,19 @@ ui_run(struct app *app) {
 			if (!code) {
 				break;
 			}
-			send_pointer(app, (int)event.button.x, (int)event.button.y);
-			struct wire click[2] = {
+			send_pointer(app, event.button.x, event.button.y);
+			struct ev click[2] = {
 					{DEV_POINTER, 0, EV_KEY, code,
 					 event.type == SDL_EVENT_MOUSE_BUTTON_DOWN}};
-			send_input(app, click, 1);
+			send_input(app, click, LENGTH(click));
 			break;
 		}
 		case SDL_EVENT_MOUSE_WHEEL: {
-			struct wire wheel[3] = {
+			struct ev wheel[3] = {
 					{DEV_POINTER, 0, EV_REL, REL_WHEEL, event.wheel.integer_y},
 					{DEV_POINTER, 0, EV_REL, REL_HWHEEL, event.wheel.integer_x},
 			};
-			send_input(app, wheel, 2);
+			send_input(app, wheel, LENGTH(wheel));
 			break;
 		}
 		default:
@@ -506,11 +481,17 @@ ui_run(struct app *app) {
 			av_frame_free(&app->frame);
 			app->frame = event.user.data1;
 
-			/* A newer frame is already queued; this one would never be
-			   seen, so do not spend a draw on it. */
-			if (!SDL_HasEvent(app->wake)) {
-				show(app);
+			if (SDL_HasEvent(app->wake)) {
+				break;
 			}
+
+			retexture(app);
+			SDL_UpdateYUVTexture(
+					app->texture, NULL, app->frame->data[0],
+					app->frame->linesize[0], app->frame->data[1],
+					app->frame->linesize[1], app->frame->data[2],
+					app->frame->linesize[2]);
+			redraw(app);
 			break;
 		}
 	}
@@ -521,65 +502,54 @@ out:
 
 	av_frame_free(&app->frame);
 	SDL_DestroyTexture(app->texture);
-	SDL_DestroyRenderer(app->renderer);
-	SDL_DestroyWindow(window);
+	if (app->renderer) {
+		SDL_Window *window = SDL_GetRenderWindow(app->renderer);
+		SDL_DestroyRenderer(app->renderer);
+		SDL_DestroyWindow(window);
+	}
 	SDL_Quit();
 }
 
 static void
-usage(FILE *out) {
+usage(void) {
 	fputs("usage: scrssh [options] [--] <ssh arguments...>\n"
 		  "\n"
 		  "options:\n"
 		  "  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]\n"
-		  "  -c <N>     capture a specific CRTC\n"
-		  "  -p <N>     capture a specific plane\n"
+		  "  -C <N>     capture a specific CRTC\n"
+		  "  -P <N>     capture a specific plane\n"
 		  "  -f <N>     capture frame rate         [default: 30]\n"
-		  "  -b <RATE>  capped bitrate             [default: 15M]\n"
+		  "  -B <RATE>  capped bitrate             [default: 500K]\n"
 		  "  -e <NAME>  force an encoder           [default: ask the host]\n"
 		  "             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264\n"
 		  "  -h         show this help\n",
-		  out);
+		  stderr);
 }
 
 int
 main(int argc, char **argv) {
-	struct config config = {
-			.device = "/dev/dri/card0",
-			.crtc = "",
-			.plane = "",
-			.fps = "30",
-			.bitrate = "15M",
-			.encoder = "",
-	};
+	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
-	for (int option; (option = getopt(argc, argv, "+d:c:p:f:b:e:h")) != -1;) {
-		switch (option) {
-		case 'd':
-			config.device = optarg;
-			break;
-		case 'c':
-			config.crtc = optarg;
-			break;
-		case 'p':
-			config.plane = optarg;
-			break;
-		case 'f':
-			config.fps = optarg;
-			break;
-		case 'b':
-			config.bitrate = optarg;
-			break;
-		case 'e':
-			config.encoder = optarg;
-			break;
+	for (int o; (o = getopt(argc, argv, "+d:c:p:f:b:e:h")) != -1;) {
+		switch (o) {
+#define OPT(c, v) \
+	case c: \
+		config[v] = optarg; \
+		break;
+			OPT('d', CONFIG_DEVICE)
+			OPT('C', CONFIG_CRTC)
+			OPT('P', CONFIG_PLANE)
+			OPT('f', CONFIG_FPS)
+			OPT('B', CONFIG_BITRATE)
+			OPT('e', CONFIG_ENCODER)
+#undef OPT
 		default:
-			usage(stderr);
-			return 2;
+			usage();
+			return 1;
 		}
 	}
 	if (optind == argc) {
-		usage(stderr);
+		usage();
 		return 2;
 	}
 
@@ -587,7 +557,7 @@ main(int argc, char **argv) {
 
 	struct app app = {0};
 	ssh_spawn(&app, argv + optind, argc - optind);
-	send_command(app.input_fd, &config);
+	send_config(app.input_fd, config);
 	fcntl(app.input_fd, F_SETFL, O_NONBLOCK);
 
 	ui_run(&app);
