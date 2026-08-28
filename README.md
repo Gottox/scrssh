@@ -16,12 +16,10 @@ over SSH. No remote configuration needed.
 # Requirements
 
 On the host:
-1. a running ssh daemon
-2. CAP_SYS_ADMIN on the target
-3. a hardware H.264 encoder (see Encoders), or enough CPU for software
-4. ffmpeg and python installed
-5. kms and uinput available (both should be the default on modern linux systems)
-6. a connected monitor or a hdmi dummy plug
+1. `sshd` running
+2. `CAP_SYS_ADMIN` aka `root`
+3. ffmpeg and python installed
+4. a screen or a HDMI dummy plug connected
 
 On the client:
 
@@ -37,24 +35,15 @@ scrssh [options] [--] <ssh arguments...>
 The host picks the encoder itself. It captures a single frame with all of
 them at once and keeps the first that works:
 
-* `h264_vaapi`: AMD and Intel.
-* `h264_nvenc`: NVIDIA with the proprietary driver.
-* `h264_v4l2m2m`: Raspberry Pi 4 and CM4.
-* `libx264`: software, for everything else including the Pi 5.
+* `h264_vaapi`: AMD and Intel
+* `h264_nvenc`: NVIDIA
+* `h264_v4l2m2m`: Raspberry Pi 
+* `libx264`: Software
 
-The dry runs are concurrent, so the search costs about one encoder start,
-and `libx264` is accepted untested, so it never fails on a host with a
-normal ffmpeg.
 `-e` forces one encoder and skips the search:
 
 ```bash
 scrssh -e libx264 user@example.com
-```
-
-The DRM device is not detected, so the rpi4 still needs the right `-d`:
-
-```bash
-scrssh -d /dev/dri/card1 user@raspberrypi sudo
 ```
 
 Usage Examples
