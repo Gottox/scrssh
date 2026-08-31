@@ -318,23 +318,18 @@ done:
 	return 0;
 }
 
-enum { DEV_KEYBOARD, DEV_POINTER };
-
 #define ABS_RANGE_MAX 65535
 
 struct ev {
-	uint8_t device;
-	uint8_t pad;
 	uint16_t type;
 	uint16_t code;
 	int32_t value;
 } __attribute__((packed));
 
-_Static_assert(sizeof(struct ev) == 10, "the wire record must not be padded");
+_Static_assert(sizeof(struct ev) == 8, "the wire record must not be padded");
 
 static void
 send_input(struct ev *ev, size_t ev_count) {
-	ev[ev_count - 1].device = ev[ev_count - 2].device;
 	ev[ev_count - 1].type = EV_SYN;
 	for (size_t i = 0; i < ev_count; i++) {
 		ev[i].type = htons(ev[i].type);
@@ -501,7 +496,7 @@ run(void) {
 				break;
 			}
 			struct ev key[2] = {
-					{DEV_KEYBOARD, 0, EV_KEY, to_scancode(event.key.scancode),
+					{EV_KEY, to_scancode(event.key.scancode),
 					 event.type == SDL_EVENT_KEY_DOWN}};
 			send_input(key, SDL_arraysize(key));
 		} break;
@@ -510,8 +505,8 @@ run(void) {
 			SDL_RendererLogicalPresentation mode;
 			SDL_GetRenderLogicalPresentation(app.renderer, &w, &h, &mode);
 			struct ev move[3] = {
-					{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(event.motion.x, w)},
-					{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(event.motion.y, h)},
+					{EV_ABS, ABS_X, to_abs(event.motion.x, w)},
+					{EV_ABS, ABS_Y, to_abs(event.motion.y, h)},
 			};
 			send_input(move, SDL_arraysize(move));
 		} break;
@@ -522,14 +517,13 @@ run(void) {
 				break;
 			}
 			struct ev click[2] = {
-					{DEV_POINTER, 0, EV_KEY, code,
-					 event.type == SDL_EVENT_MOUSE_BUTTON_DOWN}};
+					{EV_KEY, code, event.type == SDL_EVENT_MOUSE_BUTTON_DOWN}};
 			send_input(click, SDL_arraysize(click));
 		} break;
 		case SDL_EVENT_MOUSE_WHEEL: {
 			struct ev wheel[3] = {
-					{DEV_POINTER, 0, EV_REL, REL_WHEEL, event.wheel.integer_y},
-					{DEV_POINTER, 0, EV_REL, REL_HWHEEL, event.wheel.integer_x},
+					{EV_REL, REL_WHEEL, event.wheel.integer_y},
+					{EV_REL, REL_HWHEEL, event.wheel.integer_x},
 			};
 			send_input(wheel, SDL_arraysize(wheel));
 		} break;

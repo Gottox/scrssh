@@ -14,7 +14,7 @@ ABS_RANGE_MAX = 65535
 FMT_INPUT_ID_SETUP = "@HHHH80sI"
 FMT_ABS_SETUP = "@H2x6i"
 FMT_INPUT_EVENT = "@llHHi"
-FMT_WIRE = "!BBHHi"
+FMT_WIRE = "!HHi"
 WIRE_SIZE = struct.calcsize(FMT_WIRE)
 
 UI_DEV_CREATE = 0x00005501
@@ -140,13 +140,10 @@ candidates = [c for c in ENCODERS if not encoder or c[0] == encoder]
 if not candidates:
 	raise SystemExit("unknown encoder " + encoder)
 
-fds = (
-	create_device("scrssh keyboard", 0x0001, [EV_KEY, EV_SYN],
-				  range(1, KEY_ADVERTISE_MAX + 1), [], []),
-	create_device("scrssh pointer", 0x0002, [EV_KEY, EV_REL, EV_ABS, EV_SYN],
-				  [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE], [REL_WHEEL, REL_HWHEEL],
-				  [ABS_X, ABS_Y]),
-)
+fd = create_device("scrssh", 0x0001, [EV_KEY, EV_REL, EV_ABS, EV_SYN],
+				   list(range(1, KEY_ADVERTISE_MAX + 1))
+				   + [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE],
+				   [REL_WHEEL, REL_HWHEEL], [ABS_X, ABS_Y])
 
 name, options = choose(candidates)
 process = subprocess.Popen(
@@ -156,9 +153,8 @@ os.close(1)
 try:
 	while True:
 		record = read_exactly(WIRE_SIZE)
-		dev, _pad, typ, code, value = struct.unpack(FMT_WIRE, record)
-		if dev < len(fds):
-			os.write(fds[dev], struct.pack(FMT_INPUT_EVENT, 0, 0, typ, code, value))
+		typ, code, value = struct.unpack(FMT_WIRE, record)
+		os.write(fd, struct.pack(FMT_INPUT_EVENT, 0, 0, typ, code, value))
 except EOFError:
 	pass
 process.terminate()
