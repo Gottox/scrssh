@@ -18,16 +18,13 @@ FMT_INPUT_EVENT = "@llHHi"
 FMT_WIRE = "!BBHHi"
 WIRE_SIZE = struct.calcsize(FMT_WIRE)
 
-def ioc(direction, nr, size):
-	return (direction << 30) | (size << 16) | (ord("U") << 8) | nr
-
-UI_DEV_CREATE = ioc(0, 1, 0)
-UI_DEV_SETUP = ioc(1, 3, struct.calcsize(FMT_INPUT_ID_SETUP))
-UI_ABS_SETUP = ioc(1, 4, struct.calcsize(FMT_ABS_SETUP))
-UI_SET_EVBIT = ioc(1, 100, 4)
-UI_SET_KEYBIT = ioc(1, 101, 4)
-UI_SET_RELBIT = ioc(1, 102, 4)
-UI_SET_ABSBIT = ioc(1, 103, 4)
+UI_DEV_CREATE = 0x00005501
+UI_DEV_SETUP = 0x405C5503
+UI_ABS_SETUP = 0x401C5504
+UI_SET_EVBIT = 0x40045564
+UI_SET_KEYBIT = 0x40045565
+UI_SET_RELBIT = 0x40045566
+UI_SET_ABSBIT = 0x40045567
 
 def read_exactly(size):
 	data = b""
