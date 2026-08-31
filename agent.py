@@ -2,7 +2,6 @@ import fcntl
 import os
 import struct
 import subprocess
-import threading
 
 EV_SYN, EV_KEY, EV_REL, EV_ABS = 0x00, 0x01, 0x02, 0x03
 ABS_X, ABS_Y = 0x00, 0x01
@@ -61,15 +60,6 @@ def create_device(name, product, ev_bits, key_bits, rel_bits, abs_bits):
 	fcntl.ioctl(fd, UI_DEV_CREATE)
 	return fd
 
-def forward(fds):
-	try:
-		while True:
-			record = read_exactly(WIRE_SIZE)
-			dev, _pad, typ, code, value = struct.unpack(FMT_WIRE, record)
-			if dev < len(fds):
-				os.write(fds[dev], struct.pack(FMT_INPUT_EVENT, 0, 0, typ, code, value))
-	except EOFError:
-		pass
 
 DOWNLOADS = (
 	"hwmap=derive_device=vaapi,scale_vaapi=format=nv12,hwdownload,format=nv12",
@@ -158,9 +148,18 @@ fds = (
 				  [ABS_X, ABS_Y]),
 )
 
-threading.Thread(target=forward, args=(fds,), daemon=True).start()
-
 name, options = choose(candidates)
 process = subprocess.Popen(
 	command(name, options, False), stdin=subprocess.DEVNULL)
+os.close(1)
+
+try:
+	while True:
+		record = read_exactly(WIRE_SIZE)
+		dev, _pad, typ, code, value = struct.unpack(FMT_WIRE, record)
+		if dev < len(fds):
+			os.write(fds[dev], struct.pack(FMT_INPUT_EVENT, 0, 0, typ, code, value))
+except EOFError:
+	pass
+process.terminate()
 process.wait()
