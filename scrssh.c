@@ -1,10 +1,9 @@
 #include <SDL3/SDL.h>
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-
 #include <arpa/inet.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <libavcodec/avcodec.h>
+#include <libavformat/avformat.h>
 #include <linux/input-event-codes.h>
 #include <pthread.h>
 #include <signal.h>
@@ -24,16 +23,6 @@ static const char AGENT[] = {
 #include "agent.h"
 };
 
-static void
-die(const char *fmt, ...) {
-	va_list args;
-	va_start(args, fmt);
-	vfprintf(stderr, fmt, args);
-	va_end(args);
-	fputc('\n', stderr);
-	exit(1);
-}
-
 struct app {
 	char title[256];
 	pid_t child;
@@ -46,6 +35,16 @@ struct app {
 	AVFrame *frame;
 	const char *error;
 };
+
+static void
+die(const char *fmt, ...) {
+	va_list args;
+	va_start(args, fmt);
+	vfprintf(stderr, fmt, args);
+	va_end(args);
+	fputc('\n', stderr);
+	exit(1);
+}
 
 static void
 ssh_spawn(struct app *app, char **argv, size_t argc) {
@@ -557,21 +556,22 @@ usage(void) {
 
 int
 main(int argc, char **argv) {
+	struct app app = {0};
 	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
 	for (int o; (o = getopt(argc, argv, "+d:C:P:f:B:e:h")) != -1;) {
 		switch (o) {
-#define OPT(c, v) \
+#define CFG(c, v) \
 	case c: \
 		config[v] = optarg; \
 		break;
-			OPT('d', CONFIG_DEVICE)
-			OPT('C', CONFIG_CRTC)
-			OPT('P', CONFIG_PLANE)
-			OPT('f', CONFIG_FPS)
-			OPT('B', CONFIG_BITRATE)
-			OPT('e', CONFIG_ENCODER)
-#undef OPT
+			CFG('d', CONFIG_DEVICE)
+			CFG('C', CONFIG_CRTC)
+			CFG('P', CONFIG_PLANE)
+			CFG('f', CONFIG_FPS)
+			CFG('B', CONFIG_BITRATE)
+			CFG('e', CONFIG_ENCODER)
+#undef CFG
 		default:
 			usage();
 			return 1;
@@ -584,7 +584,6 @@ main(int argc, char **argv) {
 
 	signal(SIGPIPE, SIG_IGN);
 
-	struct app app = {0};
 	ssh_spawn(&app, argv + optind, argc - optind);
 	set_title(&app, argv + optind, argc - optind);
 
