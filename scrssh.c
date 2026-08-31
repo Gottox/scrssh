@@ -256,6 +256,7 @@ decode(void *arg) {
 	}
 	format->probesize = 32 * 1024;
 	format->max_analyze_duration = 100000;
+	format->fps_probe_size = 0;
 
 	AVCodecContext *decoder = NULL;
 	AVPacket *packet = NULL;
