@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
+#include <libavutil/log.h>
 #include <linux/input-event-codes.h>
 #include <poll.h>
 #include <signal.h>
@@ -626,6 +627,7 @@ main(int argc, char **argv) {
 	}
 
 	signal(SIGPIPE, SIG_IGN);
+	av_log_set_level(AV_LOG_QUIET);
 
 	ssh_spawn(argv + optind, argc - optind);
 	set_title(argv + optind, argc - optind);
