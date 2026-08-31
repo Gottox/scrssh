@@ -10,7 +10,6 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define LENGTH(a) (sizeof(a) / sizeof(*(a)))
 #define MARKER(stage) "\xff\xfe" stage "\xfe\xff"
 
 static const char AGENT[] = {
@@ -126,7 +125,7 @@ echo_off(void) {
 		return;
 	}
 	no_echo = app.tio;
-	no_echo.c_lflag &= ~(tcflag_t)ECHO;
+	no_echo.c_lflag &= ~ECHO;
 	no_echo.c_lflag |= ECHONL;
 	if (tcsetattr(STDIN_FILENO, TCSANOW, &no_echo) < 0) {
 		return;
@@ -147,7 +146,7 @@ greeting(const char *marker, int in) {
 				{app.video_fd, POLLIN, 0},
 				{in, POLLIN, 0},
 		};
-		if (poll(fds, LENGTH(fds), -1) < 0) {
+		if (poll(fds, SDL_arraysize(fds), -1) < 0) {
 			if (errno == EINTR) {
 				continue;
 			}
@@ -157,7 +156,7 @@ greeting(const char *marker, int in) {
 		if (fds[1].revents) {
 			ssize_t n = read(in, buffer, sizeof(buffer));
 			if (n > 0) {
-				put(app.input_fd, buffer, (size_t)n);
+				put(app.input_fd, buffer, n);
 			} else if (n == 0 || errno != EINTR) {
 				in = -1;
 			}
@@ -200,7 +199,7 @@ static void
 decoder_failed(const char *message) {
 	SDL_Event event = {0};
 	event.type = app.wake;
-	event.user.data2 = (void *)(uintptr_t)message;
+	event.user.data2 = (void *)message;
 	SDL_PushEvent(&event);
 }
 
@@ -400,7 +399,7 @@ send_pointer(float x, float y) {
 			{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(x, w)},
 			{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(y, h)},
 	};
-	send_input(move, LENGTH(move));
+	send_input(move, SDL_arraysize(move));
 }
 
 static void
@@ -501,7 +500,7 @@ run(void) {
 			struct ev key[2] = {
 					{DEV_KEYBOARD, 0, EV_KEY, to_scancode(event.key.scancode),
 					 event.type == SDL_EVENT_KEY_DOWN}};
-			send_input(key, LENGTH(key));
+			send_input(key, SDL_arraysize(key));
 		} break;
 		case SDL_EVENT_MOUSE_MOTION: {
 			send_pointer(event.motion.x, event.motion.y);
@@ -516,14 +515,14 @@ run(void) {
 			struct ev click[2] = {
 					{DEV_POINTER, 0, EV_KEY, code,
 					 event.type == SDL_EVENT_MOUSE_BUTTON_DOWN}};
-			send_input(click, LENGTH(click));
+			send_input(click, SDL_arraysize(click));
 		} break;
 		case SDL_EVENT_MOUSE_WHEEL: {
 			struct ev wheel[3] = {
 					{DEV_POINTER, 0, EV_REL, REL_WHEEL, event.wheel.integer_y},
 					{DEV_POINTER, 0, EV_REL, REL_HWHEEL, event.wheel.integer_x},
 			};
-			send_input(wheel, LENGTH(wheel));
+			send_input(wheel, SDL_arraysize(wheel));
 		} break;
 		default: {
 			if (event.type != app.wake) {
