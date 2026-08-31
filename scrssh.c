@@ -389,18 +389,20 @@ to_button(Uint8 button) {
 }
 
 static SDL_Rect
-fit(int window_w, int window_h, int video_w, int video_h) {
-	if (video_w <= 0 || video_h <= 0 || window_w <= 0 || window_h <= 0) {
+fit(SDL_Rect area, SDL_Rect video) {
+	if (video.w <= 0 || video.h <= 0 || area.w <= 0 || area.h <= 0) {
 		return (SDL_Rect){0, 0, 0, 0};
 	}
 
-	int w = window_w, h = window_h;
-	if ((long)video_w * window_h > (long)video_h * window_w) {
-		h = (int)((long)video_h * window_w / video_w);
+	SDL_Rect box = area;
+	if ((long)video.w * area.h > (long)video.h * area.w) {
+		box.h = (int)((long)video.h * area.w / video.w);
 	} else {
-		w = (int)((long)video_w * window_h / video_h);
+		box.w = (int)((long)video.w * area.h / video.h);
 	}
-	return (SDL_Rect){(window_w - w) / 2, (window_h - h) / 2, w, h};
+	box.x = area.x + (area.w - box.w) / 2;
+	box.y = area.y + (area.h - box.h) / 2;
+	return box;
 }
 
 static int32_t
@@ -417,13 +419,13 @@ to_abs(float value, int origin, int extent) {
 
 static SDL_Rect
 layout(void) {
-	int output_w = 0, output_h = 0;
-	float video_w = 0, video_h = 0;
-	SDL_GetCurrentRenderOutputSize(app.renderer, &output_w, &output_h);
+	SDL_Rect output = {0};
+	SDL_FRect video = {0};
+	SDL_GetCurrentRenderOutputSize(app.renderer, &output.w, &output.h);
 	if (app.texture) {
-		SDL_GetTextureSize(app.texture, &video_w, &video_h);
+		SDL_GetTextureSize(app.texture, &video.w, &video.h);
 	}
-	return fit(output_w, output_h, (int)video_w, (int)video_h);
+	return fit(output, (SDL_Rect){0, 0, video.w, video.h});
 }
 
 static void
@@ -443,7 +445,9 @@ initial_size(int *width, int *height) {
 		return;
 	}
 
-	SDL_Rect box = fit(bounds.w * 9 / 10, bounds.h * 9 / 10, *width, *height);
+	bounds.w = bounds.w * 9 / 10;
+	bounds.h = bounds.h * 9 / 10;
+	SDL_Rect box = fit(bounds, (SDL_Rect){0, 0, *width, *height});
 	if (box.w <= 0 || (*width <= box.w && *height <= box.h)) {
 		return;
 	}
