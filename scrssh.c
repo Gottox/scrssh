@@ -1,29 +1,22 @@
 #include <SDL3/SDL.h>
 #include <arpa/inet.h>
-#include <errno.h>
 #include <fcntl.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <linux/input-event-codes.h>
 #include <pthread.h>
 #include <signal.h>
-#include <stdarg.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define LENGTH(a) (sizeof(a) / sizeof *(a))
+#define LENGTH(a) (sizeof(a) / sizeof(*(a)))
 #define AVIO_BUFFER 65536
 
 static const char AGENT[] = {
 #include "agent.h"
 };
 
-struct app {
+struct {
 	char title[256];
 	pid_t child;
 	int input_fd;
@@ -34,7 +27,7 @@ struct app {
 	SDL_Texture *texture;
 	AVFrame *frame;
 	const char *error;
-};
+} app = {0};
 
 static void
 die(const char *fmt, ...) {
@@ -47,7 +40,7 @@ die(const char *fmt, ...) {
 }
 
 static void
-ssh_spawn(struct app *app, char **argv, size_t argc) {
+ssh_spawn(char **argv, size_t argc) {
 	static const char *post_argv[] = {"python3 -u -c", AGENT, NULL};
 
 	char **exec_argv = calloc(argc + LENGTH(post_argv) + 1, sizeof(char *));
@@ -82,9 +75,9 @@ ssh_spawn(struct app *app, char **argv, size_t argc) {
 	free(exec_argv);
 	close(pin[0]);
 	close(pout[1]);
-	app->input_fd = pin[1];
-	app->video_fd = pout[0];
-	app->child = pid;
+	app.input_fd = pin[1];
+	app.video_fd = pout[0];
+	app.child = pid;
 }
 
 enum CONFIG {
@@ -115,7 +108,7 @@ send_config(int fd, const char **config) {
 	}
 
 	uint16_t header = htons(length);
-	put(fd, &header, sizeof header);
+	put(fd, &header, sizeof(header));
 	for (size_t i = 0; i < CONFIG_COUNT; i++) {
 		put(fd, config[i], strlen(config[i]) + 1);
 	}
@@ -136,15 +129,15 @@ read_stream(void *opaque, uint8_t *buffer, int size) {
 }
 
 static void
-decoder_failed(const struct app *app, const char *message) {
+decoder_failed(const char *message) {
 	SDL_Event event = {0};
-	event.type = app->wake;
+	event.type = app.wake;
 	event.user.data2 = (void *)(uintptr_t)message;
 	SDL_PushEvent(&event);
 }
 
 static void
-publish(const struct app *app, AVFrame *decoded) {
+publish(AVFrame *decoded) {
 	AVFrame *sent = av_frame_alloc();
 	if (!sent) {
 		return;
@@ -152,7 +145,7 @@ publish(const struct app *app, AVFrame *decoded) {
 	av_frame_move_ref(sent, decoded);
 
 	SDL_Event event = {0};
-	event.type = app->wake;
+	event.type = app.wake;
 	event.user.data1 = sent;
 	if (!SDL_PushEvent(&event)) {
 		av_frame_free(&sent);
@@ -161,8 +154,8 @@ publish(const struct app *app, AVFrame *decoded) {
 
 static bool
 decode_packet(
-		const struct app *app, AVCodecContext *decoder, int stream,
-		AVPacket *packet, AVFrame *decoded) {
+		AVCodecContext *decoder, int stream, AVPacket *packet,
+		AVFrame *decoded) {
 	if (packet->stream_index != stream ||
 		avcodec_send_packet(decoder, packet) < 0) {
 		return true;
@@ -171,12 +164,11 @@ decode_packet(
 	while (avcodec_receive_frame(decoder, decoded) >= 0) {
 		if (decoded->format != AV_PIX_FMT_YUV420P) {
 			decoder_failed(
-					app,
 					"the remote sent a pixel format scrssh cannot show; "
 					"kmsgrab and VAAPI produce 8-bit 4:2:0");
 			return false;
 		}
-		publish(app, decoded);
+		publish(decoded);
 	}
 
 	return true;
@@ -184,17 +176,17 @@ decode_packet(
 
 static void *
 decode(void *arg) {
-	const struct app *app = arg;
+	(void)arg;
 
 	uint8_t *buffer = av_malloc(AVIO_BUFFER);
 	AVFormatContext *format = avformat_alloc_context();
 	AVIOContext *avio = buffer && format
 			? avio_alloc_context(
-					  buffer, AVIO_BUFFER, 0, (void *)(intptr_t)app->video_fd,
+					  buffer, AVIO_BUFFER, 0, (void *)(intptr_t)app.video_fd,
 					  read_stream, NULL, NULL)
 			: NULL;
 	if (!avio) {
-		decoder_failed(app, "could not set up the demuxer");
+		decoder_failed("could not set up the demuxer");
 		return NULL;
 	}
 
@@ -211,7 +203,7 @@ decode(void *arg) {
 	if (avformat_open_input(
 				&format, NULL, av_find_input_format("mpegts"), NULL) < 0) {
 		format = NULL;
-		decoder_failed(app, "could not open the remote video stream");
+		decoder_failed("could not open the remote video stream");
 		goto done;
 	}
 	const AVCodec *codec = NULL;
@@ -219,7 +211,7 @@ decode(void *arg) {
 	if (avformat_find_stream_info(format, NULL) < 0 ||
 		(stream = av_find_best_stream(
 				 format, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0)) < 0) {
-		decoder_failed(app, "the remote stream contains no video");
+		decoder_failed("the remote stream contains no video");
 		goto done;
 	}
 
@@ -228,24 +220,24 @@ decode(void *arg) {
 	if (!packet || !decoded || !(decoder = avcodec_alloc_context3(codec)) ||
 		avcodec_parameters_to_context(
 				decoder, format->streams[stream]->codecpar) < 0) {
-		decoder_failed(app, "could not open the H.264 decoder");
+		decoder_failed("could not open the H.264 decoder");
 		goto done;
 	}
 	decoder->flags |= AV_CODEC_FLAG_LOW_DELAY;
 	if (avcodec_open2(decoder, codec, NULL) < 0) {
-		decoder_failed(app, "could not open the H.264 decoder");
+		decoder_failed("could not open the H.264 decoder");
 		goto done;
 	}
 
 	while (av_read_frame(format, packet) >= 0) {
-		bool more = decode_packet(app, decoder, stream, packet, decoded);
+		bool more = decode_packet(decoder, stream, packet, decoded);
 		av_packet_unref(packet);
 		if (!more) {
 			goto done;
 		}
 	}
 
-	decoder_failed(app, "the remote video stream ended");
+	decoder_failed("the remote video stream ended");
 
 done:
 	av_frame_free(&decoded);
@@ -273,7 +265,7 @@ struct ev {
 _Static_assert(sizeof(struct ev) == 10, "the wire record must not be padded");
 
 static void
-send_input(struct app *app, struct ev *ev, size_t ev_count) {
+send_input(struct ev *ev, size_t ev_count) {
 	ev[ev_count - 1].device = ev[ev_count - 2].device;
 	ev[ev_count - 1].type = EV_SYN;
 	for (size_t i = 0; i < ev_count; i++) {
@@ -282,11 +274,11 @@ send_input(struct app *app, struct ev *ev, size_t ev_count) {
 		ev[i].value = htonl(ev[i].value);
 	}
 
-	write(app->input_fd, ev, ev_count * sizeof *ev);
+	write(app.input_fd, ev, ev_count * sizeof(*ev));
 }
 
 static uint16_t
-to_evdev(SDL_Scancode scancode) {
+to_scancode(SDL_Scancode scancode) {
 	switch (scancode) {
 #define DEF(sdl, ev) \
 	case SDL_SCANCODE_##sdl: \
@@ -341,24 +333,24 @@ to_abs(float value, int origin, int extent) {
 }
 
 static SDL_Rect
-layout(const struct app *app) {
+layout(void) {
 	int output_w = 0, output_h = 0;
 	float video_w = 0, video_h = 0;
-	SDL_GetCurrentRenderOutputSize(app->renderer, &output_w, &output_h);
-	if (app->texture) {
-		SDL_GetTextureSize(app->texture, &video_w, &video_h);
+	SDL_GetCurrentRenderOutputSize(app.renderer, &output_w, &output_h);
+	if (app.texture) {
+		SDL_GetTextureSize(app.texture, &video_w, &video_h);
 	}
 	return fit(output_w, output_h, (int)video_w, (int)video_h);
 }
 
 static void
-send_pointer(struct app *app, float x, float y) {
-	SDL_Rect box = layout(app);
+send_pointer(float x, float y) {
+	SDL_Rect box = layout();
 	struct ev move[3] = {
 			{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(x, box.x, box.w)},
 			{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(y, box.y, box.h)},
 	};
-	send_input(app, move, LENGTH(move));
+	send_input(move, LENGTH(move));
 }
 
 static void
@@ -377,163 +369,160 @@ initial_size(int *width, int *height) {
 }
 
 static void
-redraw(const struct app *app) {
-	if (SDL_HasEvent(app->wake) || SDL_HasEvent(SDL_EVENT_WINDOW_RESIZED) ||
+redraw(void) {
+	if (SDL_HasEvent(app.wake) || SDL_HasEvent(SDL_EVENT_WINDOW_RESIZED) ||
 		SDL_HasEvent(SDL_EVENT_QUIT)) {
 		return;
 	}
-	SDL_Rect box = layout(app);
-	SDL_SetRenderDrawColor(app->renderer, 0, 0, 0, 255);
-	SDL_RenderClear(app->renderer);
-	if (app->texture) {
+	SDL_Rect box = layout();
+	SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
+	SDL_RenderClear(app.renderer);
+	if (app.texture) {
 		SDL_FRect destination = {
 				(float)box.x, (float)box.y, (float)box.w, (float)box.h};
-		SDL_RenderTexture(app->renderer, app->texture, NULL, &destination);
+		SDL_RenderTexture(app.renderer, app.texture, NULL, &destination);
 	}
-	SDL_RenderPresent(app->renderer);
+	SDL_RenderPresent(app.renderer);
 }
 
 static void
-retexture(struct app *app) {
-	int w = app->frame->width, h = app->frame->height;
-	if (!app->renderer) {
+retexture(void) {
+	int w = app.frame->width, h = app.frame->height;
+	if (!app.renderer) {
 		int window_w = w, window_h = h;
 		initial_size(&window_w, &window_h);
 
 		SDL_Window *window;
 		if (!SDL_CreateWindowAndRenderer(
-					app->title, window_w, window_h,
+					app.title, window_w, window_h,
 					SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY,
-					&window, &app->renderer)) {
+					&window, &app.renderer)) {
 			die("could not create the window: %s", SDL_GetError());
 		}
 	}
 	float have_w = 0, have_h = 0;
-	if (app->texture) {
-		SDL_GetTextureSize(app->texture, &have_w, &have_h);
+	if (app.texture) {
+		SDL_GetTextureSize(app.texture, &have_w, &have_h);
 	}
 
 	if ((int)have_w == w && (int)have_h == h) {
 		return;
 	}
 
-	SDL_DestroyTexture(app->texture);
-	app->texture = SDL_CreateTexture(
-			app->renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, w,
+	SDL_DestroyTexture(app.texture);
+	app.texture = SDL_CreateTexture(
+			app.renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, w,
 			h);
-	if (!app->texture) {
+	if (!app.texture) {
 		die("could not create the video texture: %s", SDL_GetError());
 	}
-	SDL_SetTextureScaleMode(app->texture, SDL_SCALEMODE_LINEAR);
+	SDL_SetTextureScaleMode(app.texture, SDL_SCALEMODE_LINEAR);
 }
 
 static void
-ui_run(struct app *app) {
+run(void) {
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		die("could not initialise SDL: %s", SDL_GetError());
 	}
-	app->wake = SDL_RegisterEvents(1);
+	app.wake = SDL_RegisterEvents(1);
 
-	if (pthread_create(&app->decoder, NULL, decode, app) != 0) {
+	if (pthread_create(&app.decoder, NULL, decode, NULL) != 0) {
 		die("could not start the decoder thread");
 	}
 
 	SDL_Event event;
 	while (SDL_WaitEvent(&event)) {
-		if (app->renderer) {
-			SDL_ConvertEventToRenderCoordinates(app->renderer, &event);
+		if (app.renderer) {
+			SDL_ConvertEventToRenderCoordinates(app.renderer, &event);
 		}
 		switch (event.type) {
 		case SDL_EVENT_QUIT:
 		case SDL_EVENT_WINDOW_CLOSE_REQUESTED:
 			goto out;
 		case SDL_EVENT_WINDOW_RESIZED:
-		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
-			redraw(app);
-			break;
+		case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED: {
+			redraw();
+		} break;
 		case SDL_EVENT_KEY_DOWN:
 		case SDL_EVENT_KEY_UP: {
 			if (event.key.repeat) {
 				break;
 			}
 			struct ev key[2] = {
-					{DEV_KEYBOARD, 0, EV_KEY, to_evdev(event.key.scancode),
+					{DEV_KEYBOARD, 0, EV_KEY, to_scancode(event.key.scancode),
 					 event.type == SDL_EVENT_KEY_DOWN}};
-			send_input(app, key, LENGTH(key));
-			break;
-		}
-		case SDL_EVENT_MOUSE_MOTION:
-			send_pointer(app, event.motion.x, event.motion.y);
-			break;
+			send_input(key, LENGTH(key));
+		} break;
+		case SDL_EVENT_MOUSE_MOTION: {
+			send_pointer(event.motion.x, event.motion.y);
+		} break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP: {
 			uint16_t code = to_button(event.button.button);
 			if (!code) {
 				break;
 			}
-			send_pointer(app, event.button.x, event.button.y);
+			send_pointer(event.button.x, event.button.y);
 			struct ev click[2] = {
 					{DEV_POINTER, 0, EV_KEY, code,
 					 event.type == SDL_EVENT_MOUSE_BUTTON_DOWN}};
-			send_input(app, click, LENGTH(click));
-			break;
-		}
+			send_input(click, LENGTH(click));
+		} break;
 		case SDL_EVENT_MOUSE_WHEEL: {
 			struct ev wheel[3] = {
 					{DEV_POINTER, 0, EV_REL, REL_WHEEL, event.wheel.integer_y},
 					{DEV_POINTER, 0, EV_REL, REL_HWHEEL, event.wheel.integer_x},
 			};
-			send_input(app, wheel, LENGTH(wheel));
-			break;
-		}
-		default:
-			if (event.type != app->wake) {
+			send_input(wheel, LENGTH(wheel));
+		} break;
+		default: {
+			if (event.type != app.wake) {
 				break;
 			} else if (!event.user.data1) {
-				app->error = event.user.data2;
+				app.error = event.user.data2;
 				goto out;
 			}
-			av_frame_free(&app->frame);
-			app->frame = event.user.data1;
+			av_frame_free(&app.frame);
+			app.frame = event.user.data1;
 
-			if (SDL_HasEvent(app->wake)) {
+			if (SDL_HasEvent(app.wake)) {
 				break;
 			}
 
-			retexture(app);
+			retexture();
 			SDL_UpdateYUVTexture(
-					app->texture, NULL, app->frame->data[0],
-					app->frame->linesize[0], app->frame->data[1],
-					app->frame->linesize[1], app->frame->data[2],
-					app->frame->linesize[2]);
-			redraw(app);
-			break;
+					app.texture, NULL, app.frame->data[0],
+					app.frame->linesize[0], app.frame->data[1],
+					app.frame->linesize[1], app.frame->data[2],
+					app.frame->linesize[2]);
+			redraw();
+		} break;
 		}
 	}
 
 out:
-	kill(app->child, SIGTERM);
-	pthread_join(app->decoder, NULL);
+	kill(app.child, SIGTERM);
+	pthread_join(app.decoder, NULL);
 
-	av_frame_free(&app->frame);
-	SDL_DestroyTexture(app->texture);
-	if (app->renderer) {
-		SDL_Window *window = SDL_GetRenderWindow(app->renderer);
-		SDL_DestroyRenderer(app->renderer);
+	av_frame_free(&app.frame);
+	SDL_DestroyTexture(app.texture);
+	if (app.renderer) {
+		SDL_Window *window = SDL_GetRenderWindow(app.renderer);
+		SDL_DestroyRenderer(app.renderer);
 		SDL_DestroyWindow(window);
 	}
 	SDL_Quit();
 }
 
 static void
-set_title(struct app *app, char **argv, size_t argc) {
-	app->title[0] = 0;
+set_title(char **argv, size_t argc) {
+	app.title[0] = 0;
 	for (size_t i = 0; i < argc; i++) {
-		if (sizeof(app->title) > strlen(app->title) + strlen(argv[i]) + 1) {
+		if (sizeof(app.title) > strlen(app.title) + strlen(argv[i]) + 1) {
 			if (i) {
-				strcat(app->title, " ");
+				strcat(app.title, " ");
 			}
-			strcat(app->title, argv[i]);
+			strcat(app.title, argv[i]);
 		}
 	}
 }
@@ -556,7 +545,6 @@ usage(void) {
 
 int
 main(int argc, char **argv) {
-	struct app app = {0};
 	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
 	for (int o; (o = getopt(argc, argv, "+d:C:P:f:B:e:h")) != -1;) {
@@ -584,14 +572,15 @@ main(int argc, char **argv) {
 
 	signal(SIGPIPE, SIG_IGN);
 
-	ssh_spawn(&app, argv + optind, argc - optind);
-	set_title(&app, argv + optind, argc - optind);
+	ssh_spawn(argv + optind, argc - optind);
+	set_title(argv + optind, argc - optind);
 
 	send_config(app.input_fd, config);
 	fcntl(app.input_fd, F_SETFL, O_NONBLOCK);
 
-	ui_run(&app);
+	run();
 	waitpid(app.child, NULL, 0);
+
 	if (app.error) {
 		die("%s", app.error);
 	}
