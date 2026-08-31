@@ -372,8 +372,8 @@ initial_size(int *width, int *height) {
 	if (box.w <= 0 || (*width <= box.w && *height <= box.h)) {
 		return;
 	}
-	*width = box.w < 640 ? 640 : box.w;
-	*height = box.h < 480 ? 480 : box.h;
+	*width = box.w;
+	*height = box.h;
 }
 
 static void
