@@ -4,12 +4,15 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <linux/input-event-codes.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <termios.h>
 #include <unistd.h>
 
 #define LENGTH(a) (sizeof(a) / sizeof(*(a)))
 #define AVIO_BUFFER 65536
+#define MARKER(stage) "\xff\xfe" stage "\xfe\xff"
 
 static const char AGENT[] = {
 #include "agent.h"
@@ -17,6 +20,8 @@ static const char AGENT[] = {
 
 struct {
 	char title[256];
+	bool use_sudo;
+	struct termios tio;
 	pid_t child;
 	int input_fd;
 	int video_fd;
@@ -40,15 +45,23 @@ die(const char *fmt, ...) {
 
 static void
 ssh_spawn(char **argv, size_t argc) {
-	static const char *post_argv[] = {"python3 -u -c", AGENT, NULL};
+	const char **post_argv =
+			(const char *[]){"printf '" MARKER("1") "'; exec", "sudo -S",
+							 "python3 -u -c", AGENT, NULL};
+	size_t post_argc = 5;
+	if (!app.use_sudo) {
+		post_argv[1] = post_argv[0];
+		post_argv++;
+		post_argc--;
+	}
 
-	char **exec_argv = calloc(argc + LENGTH(post_argv) + 1, sizeof(char *));
+	char **exec_argv = calloc(argc + post_argc + 1, sizeof(char *));
 	if (!exec_argv) {
 		die("out of memory");
 	}
 	exec_argv[0] = "ssh";
 	memcpy(&exec_argv[1], argv, argc * sizeof(char *));
-	memcpy(&exec_argv[argc + 1], post_argv, sizeof(post_argv));
+	memcpy(&exec_argv[argc + 1], post_argv, post_argc * sizeof(char *));
 
 	int pin[2], pout[2];
 	if (pipe(pin) < 0 || pipe(pout) < 0) {
@@ -92,7 +105,78 @@ enum CONFIG {
 static void
 put(int fd, const void *data, size_t size) {
 	if (write(fd, data, size) != (ssize_t)size) {
-		die("could not send the capture configuration: %s", strerror(errno));
+		die("could not send to the remote host: %s", strerror(errno));
+	}
+}
+
+static void
+echo_restore(void) {
+	tcsetattr(STDIN_FILENO, TCSANOW, &app.tio);
+}
+
+static void
+interrupted(int signal_number) {
+	echo_restore();
+	_exit(128 + signal_number);
+}
+
+static void
+echo_off(void) {
+	struct termios no_echo;
+	if (tcgetattr(STDIN_FILENO, &app.tio) < 0) {
+		return;
+	}
+	no_echo = app.tio;
+	no_echo.c_lflag &= ~(tcflag_t)ECHO;
+	no_echo.c_lflag |= ECHONL;
+	if (tcsetattr(STDIN_FILENO, TCSANOW, &no_echo) < 0) {
+		return;
+	}
+	atexit(echo_restore);
+	signal(SIGINT, interrupted);
+	signal(SIGTERM, interrupted);
+	signal(SIGHUP, interrupted);
+}
+
+static void
+greeting(const char *marker, int in) {
+	char buffer[256];
+	size_t matched = 0;
+
+	while (marker[matched]) {
+		struct pollfd fds[] = {
+				{app.video_fd, POLLIN, 0},
+				{in, POLLIN, 0},
+		};
+		if (poll(fds, LENGTH(fds), -1) < 0) {
+			if (errno == EINTR) {
+				continue;
+			}
+			die("could not wait for the remote agent: %s", strerror(errno));
+		}
+
+		if (fds[1].revents) {
+			ssize_t n = read(in, buffer, sizeof(buffer));
+			if (n > 0) {
+				put(app.input_fd, buffer, (size_t)n);
+			} else if (n == 0 || errno != EINTR) {
+				in = -1;
+			}
+		}
+
+		if (fds[0].revents) {
+			char byte = '\0';
+			ssize_t n = read(app.video_fd, &byte, 1);
+			if (n == 0) {
+				die("the remote agent did not start");
+			} else if (n < 0 && errno != EINTR) {
+				die("could not read from the remote host: %s", strerror(errno));
+			} else if (byte == marker[matched]) {
+				matched++;
+			} else {
+				matched = byte == marker[0];
+			}
+		}
 	}
 }
 
@@ -532,6 +616,7 @@ usage(void) {
 	fputs("usage: scrssh [options] [--] <ssh arguments...>\n"
 		  "\n"
 		  "options:\n"
+		  "  -s         run the agent under `sudo -S`\n"
 		  "  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]\n"
 		  "  -C <N>     capture a specific CRTC\n"
 		  "  -P <N>     capture a specific plane\n"
@@ -547,7 +632,7 @@ int
 main(int argc, char **argv) {
 	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
-	for (int o; (o = getopt(argc, argv, "+d:C:P:f:B:e:h")) != -1;) {
+	for (int o; (o = getopt(argc, argv, "+d:C:P:f:B:e:sh")) != -1;) {
 		switch (o) {
 #define CFG(c, v) \
 	case c: \
@@ -560,6 +645,9 @@ main(int argc, char **argv) {
 			CFG('B', CONFIG_BITRATE)
 			CFG('e', CONFIG_ENCODER)
 #undef CFG
+		case 's':
+			app.use_sudo = true;
+			break;
 		default:
 			usage();
 			return 1;
@@ -574,6 +662,10 @@ main(int argc, char **argv) {
 
 	ssh_spawn(argv + optind, argc - optind);
 	set_title(argv + optind, argc - optind);
+
+	greeting(MARKER("1"), -1);
+	echo_off();
+	greeting(MARKER("2"), STDIN_FILENO);
 
 	send_config(app.input_fd, config);
 	fcntl(app.input_fd, F_SETFL, O_NONBLOCK);

@@ -14,6 +14,21 @@ Works even on the Raspberry Pi 2:
 scrssh lets you interact with remote desktops and servers
 over SSH. No remote setup needed.
 
+```
+usage: scrssh [options] [--] <ssh arguments...>
+
+options:
+  -s         run the agent with `sudo`
+  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]
+  -C <N>     capture a specific CRTC
+  -P <N>     capture a specific plane
+  -f <N>     capture frame rate         [default: 30]
+  -B <RATE>  capped bitrate             [default: 500K]
+  -e <NAME>  force an encoder           [default: ask the host]
+             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264
+  -h         show this help
+```
+
 # Requirements
 
 On the host:
@@ -26,10 +41,6 @@ On the client:
 
 1. `ssh`
 2. `scrssh`
-
-```
-scrssh [options] [--] <ssh arguments...>
-```
 
 # Encoders
 
@@ -56,36 +67,32 @@ Connect to a remote server and view its console:
 scrssh user@example.com
 ```
 
-Connect to a remote server with a specific port. scrssh's own options stop
-at the first non-option, so ssh's arguments go after `--`:
+scrssh works with all `ssh` command line options, so it's easy to use custom ports
+or a jump hosts:
 
 ```bash
-scrssh -- -p 2222 user@example.com
+scrssh -- -p 2222 -J user@jumphost.com user@example.com
 ```
 
-You can also tunnel through sudo if root is unavailable.
-Please note, that it only works with passwordless sudo.
+If root is unavailable, `-s` runs the agent under `sudo`:
 
 ```bash
-scrssh -- -p 2222 user@example.com sudo
+scrssh -s -- -p 2222 user@example.com
 ```
 
 # Troubleshooting
 
 ```
-sudo: a terminal is required to read the password; either use the -S option to read from standard input or configure an askpass helper
-sudo: a password is required
-[mpegts @ 0x7f1ed4010940] Could not detect TS packet size, defaulting to non-FEC/DVHS
+[in#0 @ 0x5566dacb3f80] No handle set on framebuffer: maybe you need some additional capabilities?
+[in#0 @ 0x5566dacb3c80] Error opening input: Invalid argument
+Error opening input file -.
+Error opening input files: Invalid argument
+[mpegts @ 0x7f939c010940] Could not detect TS packet size, defaulting to non-FEC/DVHS
 the remote stream contains no video
 ```
 
-Currently scrssh can't handle passwords with sudo. either add `NOPASSWD:` to your /etc/sudoers for the user, or login as root directly.
-
-```
-PermissionError: [Errno 13] Permission denied: '/dev/uinput'
-```
-
-The remote host doesn not have permissions for uinput. scrssh needs to *write* to `/dev/uinput`. It also needs `CAP_SYS_ADMIN` to capture the screen.
+The remote host doesn not have required permissions. Either log in as root or add the `-s`
+flag to scrcpy to enable `sudo` mode.
 
 ```
 [in#0 @ 0x560f3e28ff80] Framebuffer pixel format 30334241 is not a known supported format.
