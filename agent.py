@@ -92,34 +92,54 @@ ENCODERS = (
 				 "-tune", "zerolatency"]),
 )
 
-def command(encoder, options, probe):
+def capture():
 	return (
 		["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "kmsgrab",
 		 "-device", device, "-framerate", fps]
 		+ (["-crtc_id", crtc] if crtc else [])
 		+ (["-plane_id", plane] if plane else [])
-		+ ["-i", "-", "-c:v", encoder] + options
+		+ ["-i", "-"]
+	)
+
+def command(encoder, options, probe):
+	return (
+		capture() + ["-c:v", encoder] + options
 		+ ["-b:v", bitrate, "-maxrate", bitrate, "-g", "60", "-bf", "0"]
 		+ (["-frames:v", "1"] if probe else [])
 		+ ["-f", "mpegts", "-flush_packets", "1", "-muxdelay", "0",
 		   "-muxpreload", "0", "pipe:1"]
 	)
 
+def run(argv, **kwargs):
+	return subprocess.run(argv, stdin=subprocess.DEVNULL,
+						  stderr=subprocess.DEVNULL, **kwargs)
+
+def find_download():
+	for download in DOWNLOADS:
+		chain = download + ",format=yuv420p"
+		if not run(capture() + ["-vf", chain, "-frames:v", "1",
+								"-f", "null", "-"],
+				   stdout=subprocess.DEVNULL).returncode:
+			return chain
+	return DOWNLOADS[-1] + ",format=yuv420p"
+
+download = None
+
+def resolve(candidate):
+	global download
+	name, options = candidate
+	if not any("%s" in option for option in options):
+		return candidate
+	if download is None:
+		download = find_download()
+	return name, [option.replace("%s", download) for option in options]
+
 def choose(candidates):
-	probes = [
-		subprocess.Popen(command(name, options, True),
-						 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-						 stderr=subprocess.DEVNULL)
-		for name, options in candidates[:-1]
-	]
-	chosen = candidates[-1]
 	for candidate in candidates[:-1]:
-		if probes.pop(0).communicate()[0]:
-			chosen = candidate
-			break
-	for probe in probes:
-		probe.kill()
-	return chosen
+		candidate = resolve(candidate)
+		if run(command(*candidate, True), stdout=subprocess.PIPE).stdout:
+			return candidate
+	return resolve(candidates[-1])
 
 subprocess.run(["modprobe", "uinput"], env={"PATH": "/sbin:/usr/sbin:/bin:/usr/bin"},
 			   stdout=subprocess.DEVNULL)
@@ -129,12 +149,7 @@ device, crtc, plane, fps, bitrate, encoder, _ = (
 	read_exactly(size).decode().split("\0")
 )
 
-candidates = [
-	(name, [option.replace("%s", download + ",format=yuv420p") for option in options])
-	for name, options in ENCODERS
-	if not encoder or name == encoder
-	for download in (DOWNLOADS if any("%s" in o for o in options) else ("",))
-]
+candidates = [c for c in ENCODERS if not encoder or c[0] == encoder]
 if not candidates:
 	raise SystemExit("unknown encoder " + encoder)
 
