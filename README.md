@@ -20,6 +20,7 @@ Works even on the Raspberry Pi 2:
 
 ```
 usage: scrssh [options] [--] <ssh arguments...>
+https://codeberg.org/Gottox/scrssh
 
 options:
   -s         run the agent under `sudo -S`

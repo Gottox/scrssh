@@ -541,19 +541,19 @@ set_title(char **argv, size_t argc) {
 
 static void
 usage(void) {
-	fputs("usage: scrssh [options] [--] <ssh arguments...>\n"
-		  "\n"
-		  "options:\n"
-		  "  -s         run the agent under `sudo -S`\n"
-		  "  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]\n"
-		  "  -C <N>     capture a specific CRTC\n"
-		  "  -P <N>     capture a specific plane\n"
-		  "  -f <N>     capture frame rate         [default: 30]\n"
-		  "  -B <RATE>  capped bitrate             [default: 500K]\n"
-		  "  -e <NAME>  force an encoder           [default: ask the host]\n"
-		  "             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264\n"
-		  "  -h         show this help\n",
-		  stderr);
+	die("usage: scrssh [options] [--] <ssh arguments...>\n"
+		"https://codeberg.org/Gottox/scrssh\n"
+		"\n"
+		"options:\n"
+		"  -s         run the agent under `sudo -S`\n"
+		"  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]\n"
+		"  -C <N>     capture a specific CRTC\n"
+		"  -P <N>     capture a specific plane\n"
+		"  -f <N>     capture frame rate         [default: 30]\n"
+		"  -B <RATE>  capped bitrate             [default: 500K]\n"
+		"  -e <NAME>  force an encoder           [default: ask the host]\n"
+		"             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264\n"
+		"  -h         show this help");
 }
 
 int
@@ -578,12 +578,10 @@ main(int argc, char **argv) {
 			break;
 		default:
 			usage();
-			return 1;
 		}
 	}
 	if (optind == argc) {
 		usage();
-		return 2;
 	}
 
 	signal(SIGPIPE, SIG_IGN);
