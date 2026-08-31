@@ -3,9 +3,9 @@
 Viable TeamViewer/RustDesk alternative for Linux in under 1000 lines of C and
 Python. `scrcpy` for the Linux admin.
 
-scrssh lets you view and control remote desktops and servers over SSH. Nothing
+*scrssh* lets you view and control remote desktops and servers over SSH. Nothing
 is installed on the remote host and no daemon is left behind: the agent is a
-Python script that scrssh pipes over the connection, and it exits with the
+Python script that *scrssh* pipes over the connection, and it exits with the
 session. From command line to desktop takes about two seconds.
 
 Works on Bazzite:
