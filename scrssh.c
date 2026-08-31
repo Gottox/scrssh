@@ -403,18 +403,6 @@ to_abs(float value, int extent) {
 }
 
 static void
-send_pointer(float x, float y) {
-	int w = 0, h = 0;
-	SDL_RendererLogicalPresentation mode;
-	SDL_GetRenderLogicalPresentation(app.renderer, &w, &h, &mode);
-	struct ev move[3] = {
-			{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(x, w)},
-			{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(y, h)},
-	};
-	send_input(move, SDL_arraysize(move));
-}
-
-static void
 initial_size(int *width, int *height) {
 	SDL_Rect bounds;
 	if (!SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &bounds)) {
@@ -518,7 +506,14 @@ run(void) {
 			send_input(key, SDL_arraysize(key));
 		} break;
 		case SDL_EVENT_MOUSE_MOTION: {
-			send_pointer(event.motion.x, event.motion.y);
+			int w = 0, h = 0;
+			SDL_RendererLogicalPresentation mode;
+			SDL_GetRenderLogicalPresentation(app.renderer, &w, &h, &mode);
+			struct ev move[3] = {
+					{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(event.motion.x, w)},
+					{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(event.motion.y, h)},
+			};
+			send_input(move, SDL_arraysize(move));
 		} break;
 		case SDL_EVENT_MOUSE_BUTTON_DOWN:
 		case SDL_EVENT_MOUSE_BUTTON_UP: {
@@ -526,7 +521,6 @@ run(void) {
 			if (!code) {
 				break;
 			}
-			send_pointer(event.button.x, event.button.y);
 			struct ev click[2] = {
 					{DEV_POINTER, 0, EV_KEY, code,
 					 event.type == SDL_EVENT_MOUSE_BUTTON_DOWN}};
