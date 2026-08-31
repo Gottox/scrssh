@@ -465,6 +465,8 @@ retexture(void) {
 	SDL_SetTextureScaleMode(app.texture, SDL_SCALEMODE_LINEAR);
 	SDL_SetRenderLogicalPresentation(
 			app.renderer, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+	SDL_SetWindowAspectRatio(
+			SDL_GetRenderWindow(app.renderer), (float)w / h, (float)w / h);
 }
 
 static void
