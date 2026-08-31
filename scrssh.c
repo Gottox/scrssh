@@ -9,7 +9,6 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <termios.h>
-#include <time.h>
 #include <unistd.h>
 
 #define MARKER(stage) "\xff\xfe" stage "\xfe\xff"
@@ -19,7 +18,6 @@ static const char AGENT[] = {
 };
 
 struct {
-	struct timespec time;
 	char title[256];
 	bool use_sudo;
 	struct termios tio;
@@ -44,33 +42,22 @@ die(const char *fmt, ...) {
 	exit(1);
 }
 
-static double
-elapsed(void) {
-	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
-	return (now.tv_sec - app.time.tv_sec) +
-			(now.tv_nsec - app.time.tv_nsec) / 1e9;
-}
-
 static void
 ssh_spawn(char **argv, size_t argc) {
-	const char **post_argv =
-			(const char *[]){"printf '" MARKER("1") "'; exec", "sudo -S",
-							 "python3 -u -c", AGENT, NULL};
-	size_t post_argc = 5;
-	if (!app.use_sudo) {
-		post_argv[1] = post_argv[0];
-		post_argv++;
-		post_argc--;
+	const char *post_argv[] = {
+			"printf '" MARKER("1") "';", "exec", "python3 -u -c", AGENT, NULL};
+	if (app.use_sudo) {
+		post_argv[1] = "exec sudo -S";
 	}
 
-	char **exec_argv = calloc(argc + post_argc + 1, sizeof(char *));
+	char **exec_argv =
+			calloc(argc + 1 + SDL_arraysize(post_argv), sizeof(char *));
 	if (!exec_argv) {
 		die("out of memory");
 	}
 	exec_argv[0] = "ssh";
 	memcpy(&exec_argv[1], argv, argc * sizeof(char *));
-	memcpy(&exec_argv[argc + 1], post_argv, post_argc * sizeof(char *));
+	memcpy(&exec_argv[argc + 1], post_argv, sizeof(post_argv));
 
 	int pin[2], pout[2];
 	if (pipe(pin) < 0 || pipe(pout) < 0) {
@@ -368,23 +355,6 @@ to_button(Uint8 button) {
 	}
 }
 
-static SDL_Rect
-fit(SDL_Rect area, SDL_Rect video) {
-	if (video.w <= 0 || video.h <= 0 || area.w <= 0 || area.h <= 0) {
-		return (SDL_Rect){0, 0, 0, 0};
-	}
-
-	SDL_Rect box = area;
-	if ((long)video.w * area.h > (long)video.h * area.w) {
-		box.h = (int)((long)video.h * area.w / video.w);
-	} else {
-		box.w = (int)((long)video.w * area.h / video.h);
-	}
-	box.x = area.x + (area.w - box.w) / 2;
-	box.y = area.y + (area.h - box.h) / 2;
-	return box;
-}
-
 static int32_t
 to_abs(float value, int extent) {
 	long offset = value;
@@ -398,20 +368,47 @@ to_abs(float value, int extent) {
 }
 
 static void
-initial_size(int *width, int *height) {
-	SDL_Rect bounds;
-	if (!SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &bounds)) {
-		return;
+create_window(int width, int height) {
+	SDL_Rect bounds = {0, 0, 0, 0};
+	SDL_GetDisplayUsableBounds(SDL_GetPrimaryDisplay(), &bounds);
+
+	long max_w = bounds.w * 9L / 10, max_h = bounds.h * 9L / 10;
+	long window_w = width, window_h = height;
+	if (width > 0 && height > 0 && max_w > 0 && max_h > 0 &&
+		(width > max_w || height > max_h)) {
+		long w = width, h = height;
+		if (w * max_h > h * max_w) {
+			h = h * max_w / w;
+			w = max_w;
+		} else {
+			w = w * max_h / h;
+			h = max_h;
+		}
+		if (w > 0 && h > 0) {
+			window_w = w;
+			window_h = h;
+		}
 	}
 
-	bounds.w = bounds.w * 9 / 10;
-	bounds.h = bounds.h * 9 / 10;
-	SDL_Rect box = fit(bounds, (SDL_Rect){0, 0, *width, *height});
-	if (box.w <= 0 || (*width <= box.w && *height <= box.h)) {
-		return;
+	SDL_Window *window;
+	if (!SDL_CreateWindowAndRenderer(
+				app.title, (int)window_w, (int)window_h,
+				SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY, &window,
+				&app.renderer)) {
+		die("could not create the window: %s", SDL_GetError());
 	}
-	*width = box.w;
-	*height = box.h;
+
+	app.texture = SDL_CreateTexture(
+			app.renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING,
+			width, height);
+	if (!app.texture) {
+		die("could not create the video texture: %s", SDL_GetError());
+	}
+	SDL_SetTextureScaleMode(app.texture, SDL_SCALEMODE_LINEAR);
+	SDL_SetRenderLogicalPresentation(
+			app.renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+	SDL_SetWindowAspectRatio(
+			window, (float)width / height, (float)width / height);
 }
 
 static void
@@ -422,47 +419,8 @@ redraw(void) {
 	}
 	SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
 	SDL_RenderClear(app.renderer);
-	if (app.texture) {
-		SDL_RenderTexture(app.renderer, app.texture, NULL, NULL);
-	}
+	SDL_RenderTexture(app.renderer, app.texture, NULL, NULL);
 	SDL_RenderPresent(app.renderer);
-}
-
-static void
-retexture(void) {
-	int w = app.frame->width, h = app.frame->height;
-	if (!app.renderer) {
-		int window_w = w, window_h = h;
-		initial_size(&window_w, &window_h);
-
-		fprintf(stderr, "initialization took %.2f seconds\n", elapsed());
-		SDL_Window *window;
-		if (!SDL_CreateWindowAndRenderer(
-					app.title, window_w, window_h,
-					SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY,
-					&window, &app.renderer)) {
-			die("could not create the window: %s", SDL_GetError());
-		}
-	}
-	int have_w = 0, have_h = 0;
-	SDL_RendererLogicalPresentation mode;
-	SDL_GetRenderLogicalPresentation(app.renderer, &have_w, &have_h, &mode);
-	if (have_w == w && have_h == h) {
-		return;
-	}
-
-	SDL_DestroyTexture(app.texture);
-	app.texture = SDL_CreateTexture(
-			app.renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING, w,
-			h);
-	if (!app.texture) {
-		die("could not create the video texture: %s", SDL_GetError());
-	}
-	SDL_SetTextureScaleMode(app.texture, SDL_SCALEMODE_LINEAR);
-	SDL_SetRenderLogicalPresentation(
-			app.renderer, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-	SDL_SetWindowAspectRatio(
-			SDL_GetRenderWindow(app.renderer), (float)w / h, (float)w / h);
 }
 
 static void
@@ -541,7 +499,9 @@ run(void) {
 				break;
 			}
 
-			retexture();
+			if (!app.renderer) {
+				create_window(app.frame->width, app.frame->height);
+			}
 			SDL_UpdateYUVTexture(
 					app.texture, NULL, app.frame->data[0],
 					app.frame->linesize[0], app.frame->data[1],
@@ -569,13 +529,13 @@ out:
 static void
 set_title(char **argv, size_t argc) {
 	app.title[0] = 0;
-	for (size_t i = 0; i < argc; i++) {
-		if (sizeof(app.title) > strlen(app.title) + strlen(argv[i]) + 1) {
-			if (i) {
-				strcat(app.title, " ");
-			}
-			strcat(app.title, argv[i]);
+	for (size_t i = 0; i < argc &&
+		 sizeof(app.title) > strlen(argv[i]) + strlen(app.title) + 1;
+		 i++) {
+		if (i) {
+			strcat(app.title, " ");
 		}
+		strcat(app.title, argv[i]);
 	}
 }
 
@@ -626,7 +586,6 @@ main(int argc, char **argv) {
 		return 2;
 	}
 
-	clock_gettime(CLOCK_MONOTONIC, &app.time);
 	signal(SIGPIPE, SIG_IGN);
 	av_log_set_level(AV_LOG_QUIET);
 
