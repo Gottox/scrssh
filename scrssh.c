@@ -11,7 +11,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define MARKER(stage) "\xff\xfe" stage "\xfe\xff"
+#define MARKER(s) "\xff\xfe" s "\xfe\xff"
 
 static const char AGENT[] = {
 #include "agent.h"
