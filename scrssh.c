@@ -11,7 +11,6 @@
 #include <unistd.h>
 
 #define LENGTH(a) (sizeof(a) / sizeof(*(a)))
-#define AVIO_BUFFER 65536
 #define MARKER(stage) "\xff\xfe" stage "\xfe\xff"
 
 static const char AGENT[] = {
@@ -197,20 +196,6 @@ send_config(int fd, const char **config) {
 	}
 }
 
-static int
-read_stream(void *opaque, uint8_t *buffer, int size) {
-	for (;;) {
-		ssize_t got = read((int)(intptr_t)opaque, buffer, (size_t)size);
-		if (got > 0) {
-			return (int)got;
-		}
-		if (got < 0 && errno == EINTR) {
-			continue;
-		}
-		return AVERROR_EOF;
-	}
-}
-
 static void
 decoder_failed(const char *message) {
 	SDL_Event event = {0};
@@ -261,21 +246,14 @@ static int
 decode(void *arg) {
 	(void)arg;
 
-	uint8_t *buffer = av_malloc(AVIO_BUFFER);
+	char url[32];
+	snprintf(url, sizeof(url), "pipe:%d", app.video_fd);
+
 	AVFormatContext *format = avformat_alloc_context();
-	AVIOContext *avio = buffer && format
-			? avio_alloc_context(
-					  buffer, AVIO_BUFFER, 0, (void *)(intptr_t)app.video_fd,
-					  read_stream, NULL, NULL)
-			: NULL;
-	if (!avio) {
+	if (!format) {
 		decoder_failed("could not set up the demuxer");
 		return 0;
 	}
-
-	format->pb = avio;
-	format->flags |= AVFMT_FLAG_CUSTOM_IO;
-
 	format->probesize = 32 * 1024;
 	format->max_analyze_duration = 100000;
 
@@ -284,8 +262,7 @@ decode(void *arg) {
 	AVFrame *decoded = NULL;
 
 	if (avformat_open_input(
-				&format, NULL, av_find_input_format("mpegts"), NULL) < 0) {
-		format = NULL;
+				&format, url, av_find_input_format("mpegts"), NULL) < 0) {
 		decoder_failed("could not open the remote video stream");
 		goto done;
 	}
@@ -327,9 +304,6 @@ done:
 	av_packet_free(&packet);
 	avcodec_free_context(&decoder);
 	avformat_close_input(&format);
-
-	av_free(avio->buffer);
-	avio_context_free(&avio);
 	return 0;
 }
 
