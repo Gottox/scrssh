@@ -9,6 +9,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #define MARKER(stage) "\xff\xfe" stage "\xfe\xff"
@@ -18,6 +19,7 @@ static const char AGENT[] = {
 };
 
 struct {
+	struct timespec time;
 	char title[256];
 	bool use_sudo;
 	struct termios tio;
@@ -40,6 +42,14 @@ die(const char *fmt, ...) {
 	va_end(args);
 	fputc('\n', stderr);
 	exit(1);
+}
+
+static double
+elapsed(void) {
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (now.tv_sec - app.time.tv_sec) +
+			(now.tv_nsec - app.time.tv_nsec) / 1e9;
 }
 
 static void
@@ -442,6 +452,7 @@ retexture(void) {
 		int window_w = w, window_h = h;
 		initial_size(&window_w, &window_h);
 
+		fprintf(stderr, "initialization took %.2f seconds\n", elapsed());
 		SDL_Window *window;
 		if (!SDL_CreateWindowAndRenderer(
 					app.title, window_w, window_h,
@@ -627,6 +638,7 @@ main(int argc, char **argv) {
 		return 2;
 	}
 
+	clock_gettime(CLOCK_MONOTONIC, &app.time);
 	signal(SIGPIPE, SIG_IGN);
 	av_log_set_level(AV_LOG_QUIET);
 
