@@ -1,5 +1,6 @@
 import fcntl
 import os
+import signal
 import struct
 import subprocess
 
@@ -146,6 +147,7 @@ fd = create_device("scrssh", 0x0001, [EV_KEY, EV_REL, EV_ABS, EV_SYN],
 				   [REL_WHEEL, REL_HWHEEL], [ABS_X, ABS_Y])
 
 name, options = choose(candidates)
+signal.signal(signal.SIGCHLD, lambda *_: os._exit(0))
 process = subprocess.Popen(
 	command(name, options, False), stdin=subprocess.DEVNULL)
 os.close(1)
