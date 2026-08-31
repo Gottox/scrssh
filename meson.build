@@ -22,7 +22,6 @@ executable(
         dependency('libavformat'),
         dependency('libavcodec'),
         dependency('libavutil'),
-        dependency('threads'),
     ],
     install: true,
 )

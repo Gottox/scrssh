@@ -4,7 +4,6 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <linux/input-event-codes.h>
-#include <pthread.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -22,7 +21,7 @@ struct {
 	int input_fd;
 	int video_fd;
 	Uint32 wake;
-	pthread_t decoder;
+	SDL_Thread *decoder;
 	SDL_Renderer *renderer;
 	SDL_Texture *texture;
 	AVFrame *frame;
@@ -174,7 +173,7 @@ decode_packet(
 	return true;
 }
 
-static void *
+static int
 decode(void *arg) {
 	(void)arg;
 
@@ -187,7 +186,7 @@ decode(void *arg) {
 			: NULL;
 	if (!avio) {
 		decoder_failed("could not set up the demuxer");
-		return NULL;
+		return 0;
 	}
 
 	format->pb = avio;
@@ -247,7 +246,7 @@ done:
 
 	av_free(avio->buffer);
 	avio_context_free(&avio);
-	return NULL;
+	return 0;
 }
 
 enum { DEV_KEYBOARD, DEV_POINTER };
@@ -426,8 +425,9 @@ run(void) {
 	}
 	app.wake = SDL_RegisterEvents(1);
 
-	if (pthread_create(&app.decoder, NULL, decode, NULL) != 0) {
-		die("could not start the decoder thread");
+	app.decoder = SDL_CreateThread(decode, "decoder", NULL);
+	if (!app.decoder) {
+		die("could not start the decoder thread: %s", SDL_GetError());
 	}
 
 	SDL_Event event;
@@ -502,7 +502,7 @@ run(void) {
 
 out:
 	kill(app.child, SIGTERM);
-	pthread_join(app.decoder, NULL);
+	SDL_WaitThread(app.decoder, NULL);
 
 	av_frame_free(&app.frame);
 	SDL_DestroyTexture(app.texture);
