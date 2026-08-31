@@ -132,7 +132,7 @@ def choose(candidates):
 			return candidate
 	return resolve(candidates[-1])
 
-os.write(1, b"\xff\xfe2\xfe\xff")
+os.write(1, b"\xff\xfeagent\xfe\xff\n")
 subprocess.run(["modprobe", "uinput"], env={"PATH": "/sbin:/usr/sbin:/bin:/usr/bin"},
 			   stdout=subprocess.DEVNULL)
 size = struct.unpack("!H", read_exactly(2))[0]

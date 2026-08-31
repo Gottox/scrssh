@@ -15,7 +15,7 @@
 #include <termios.h>
 #include <unistd.h>
 
-#define MARKER(s) "\xff\xfe" s "\xfe\xff"
+#define MARKER(s) "\xff\xfe" s "\xfe\xff\n"
 
 static const char AGENT[] = {
 #include "agent.h"
@@ -49,7 +49,7 @@ die(const char *fmt, ...) {
 static void
 ssh_spawn(char **argv, size_t argc) {
 	const char *post_argv[] = {
-			"printf '" MARKER("1") "';", "exec", "python3 -u -c", AGENT, NULL};
+			"printf '" MARKER("login") "';", "exec", "python3 -u -c", AGENT, NULL};
 	if (app.use_sudo) {
 		post_argv[1] = "exec sudo -S";
 	}
@@ -594,9 +594,9 @@ main(int argc, char **argv) {
 	ssh_spawn(argv + optind, argc - optind);
 	set_title(argv + optind, argc - optind);
 
-	greeting(MARKER("1"), -1);
+	greeting(MARKER("login"), -1);
 	echo_off();
-	greeting(MARKER("2"), STDIN_FILENO);
+	greeting(MARKER("agent"), STDIN_FILENO);
 
 	send_config(app.input_fd, config);
 	fcntl(app.input_fd, F_SETFL, O_NONBLOCK);
