@@ -138,9 +138,9 @@ def choose(candidates):
 			return candidate
 	return resolve(candidates[-1])
 
+os.write(1, b"\xff\xfe2\xfe\xff")
 subprocess.run(["modprobe", "uinput"], env={"PATH": "/sbin:/usr/sbin:/bin:/usr/bin"},
 			   stdout=subprocess.DEVNULL)
-os.write(1, b"\xff\xfe2\xfe\xff")
 size = struct.unpack("!H", read_exactly(2))[0]
 device, crtc, plane, fps, bitrate, encoder, _ = (
 	read_exactly(size).decode().split("\0")
