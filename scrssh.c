@@ -406,8 +406,8 @@ fit(SDL_Rect area, SDL_Rect video) {
 }
 
 static int32_t
-to_abs(float value, int origin, int extent) {
-	long offset = value - origin;
+to_abs(float value, int extent) {
+	long offset = value;
 	if (extent <= 0 || offset <= 0) {
 		return 0;
 	}
@@ -417,23 +417,14 @@ to_abs(float value, int origin, int extent) {
 	return (int32_t)((offset * ABS_RANGE_MAX + extent / 2) / extent);
 }
 
-static SDL_Rect
-layout(void) {
-	SDL_Rect output = {0};
-	SDL_FRect video = {0};
-	SDL_GetCurrentRenderOutputSize(app.renderer, &output.w, &output.h);
-	if (app.texture) {
-		SDL_GetTextureSize(app.texture, &video.w, &video.h);
-	}
-	return fit(output, (SDL_Rect){0, 0, video.w, video.h});
-}
-
 static void
 send_pointer(float x, float y) {
-	SDL_Rect box = layout();
+	int w = 0, h = 0;
+	SDL_RendererLogicalPresentation mode;
+	SDL_GetRenderLogicalPresentation(app.renderer, &w, &h, &mode);
 	struct ev move[3] = {
-			{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(x, box.x, box.w)},
-			{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(y, box.y, box.h)},
+			{DEV_POINTER, 0, EV_ABS, ABS_X, to_abs(x, w)},
+			{DEV_POINTER, 0, EV_ABS, ABS_Y, to_abs(y, h)},
 	};
 	send_input(move, LENGTH(move));
 }
@@ -461,13 +452,10 @@ redraw(void) {
 		SDL_HasEvent(SDL_EVENT_QUIT)) {
 		return;
 	}
-	SDL_Rect box = layout();
 	SDL_SetRenderDrawColor(app.renderer, 0, 0, 0, 255);
 	SDL_RenderClear(app.renderer);
 	if (app.texture) {
-		SDL_FRect destination = {
-				(float)box.x, (float)box.y, (float)box.w, (float)box.h};
-		SDL_RenderTexture(app.renderer, app.texture, NULL, &destination);
+		SDL_RenderTexture(app.renderer, app.texture, NULL, NULL);
 	}
 	SDL_RenderPresent(app.renderer);
 }
@@ -487,12 +475,10 @@ retexture(void) {
 			die("could not create the window: %s", SDL_GetError());
 		}
 	}
-	float have_w = 0, have_h = 0;
-	if (app.texture) {
-		SDL_GetTextureSize(app.texture, &have_w, &have_h);
-	}
-
-	if ((int)have_w == w && (int)have_h == h) {
+	int have_w = 0, have_h = 0;
+	SDL_RendererLogicalPresentation mode;
+	SDL_GetRenderLogicalPresentation(app.renderer, &have_w, &have_h, &mode);
+	if (have_w == w && have_h == h) {
 		return;
 	}
 
@@ -504,6 +490,8 @@ retexture(void) {
 		die("could not create the video texture: %s", SDL_GetError());
 	}
 	SDL_SetTextureScaleMode(app.texture, SDL_SCALEMODE_LINEAR);
+	SDL_SetRenderLogicalPresentation(
+			app.renderer, w, h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 }
 
 static void
