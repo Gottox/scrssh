@@ -107,3 +107,8 @@ The framebuffer is 10 bit. Disable HDR on the remote host.
 > ```
 
 scrssh does not support mode switches during a session.
+
+## License
+
+*scrssh* is released under the GNU General Public License, version 2. See
+[LICENSE](./LICENSE) for the full text.

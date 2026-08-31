@@ -1,3 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only
+ * Copyright (C) 2026 Enno Boland <g@s01.de>
+ */
+
 #define _GNU_SOURCE
 #include <assert.h>
 #include <stdio.h>
