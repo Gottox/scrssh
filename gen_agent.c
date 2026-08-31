@@ -1,13 +1,30 @@
+#define _GNU_SOURCE
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 int
 main(void) {
-	fputs("'\\\'',", stdout);
-	for (int byte; (byte = getchar()) != EOF;) {
-		assert(byte != '\'');
-		printf("%d,", byte);
+	char *line = NULL, *p;
+	size_t n = 0;
+	puts("'\\'',");
+	while (getline(&line, &n, stdin) > 0) {
+		assert(strchr(line, '\'') == NULL);
+		if ((p = strchr(line, '#'))) {
+			*p = 0;
+		}
+		for (p = &line[strlen(line) - 1]; strchr(" \t\n", *p); p--) {
+			*p = 0;
+		}
+		for (p = line; *p && *p != '\n' && *p != '#'; p++) {
+			printf("%d,", *p);
+		}
+		if (p != line) {
+			puts("'\\n',");
+		}
 	}
-	fputs("'\\\'',0", stdout);
+	puts("'\\'',0\n");
+	free(line);
 	return 0;
 }
