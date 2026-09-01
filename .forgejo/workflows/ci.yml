@@ -1,0 +1,145 @@
+name: CI
+# Every commit and pull request is formatted, built five ways, and packed into
+# the source tarball a release would ship. Pushing a version tag adds the two
+# steps that publish it to Codeberg -- and since dist waits on the other jobs,
+# nothing is released that did not build everywhere first.
+#
+# meson dist is a check of its own: it unpacks the tarball it just built into a
+# fresh tree and builds, tests and installs it there, which is what catches a
+# file that was never added to git.
+#
+# Sanitizers are off everywhere. The working default is an address-sanitised
+# debug build, which is neither what gets shipped nor what every compiler here
+# can link.
+on:
+  push:
+    branches:
+    - "main"
+    tags:
+    - 'v[0-9]*.[0-9]*.[0-9]*'
+  pull_request:
+    branches:
+    - "main"
+  workflow_dispatch:
+
+env:
+  APK_PACKAGES: >-
+    git
+    build-base
+    meson
+    muon
+    samurai
+    pkgconf
+    gcc
+    clang
+    compiler-rt
+    tcc
+    tcc-libs-static
+    clang-extra-tools
+    sdl3-dev
+    ffmpeg-dev
+
+jobs:
+  format-check:
+    runs-on: alpine-pod
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/cache@v4
+      with:
+        path: ~/.apk-cache
+        key: apk-${{ hashFiles('.forgejo/workflows/ci.yml') }}
+        restore-keys: |
+          apk-
+    - name: setup
+      run: |
+        mkdir -p "$HOME/.apk-cache"
+        sudo apk add --cache-dir "$HOME/.apk-cache" --update-cache $APK_PACKAGES
+    - name: muon fmt
+      run: |
+        find . -path ./subprojects -prune -o \
+            \( -name meson.build -or -name meson.options -or -name meson_options.txt \) \
+            -print0 | xargs -0 -r muon fmt -i
+        git diff --exit-code
+    - name: clang-format
+      run: |
+        meson setup build -Db_sanitize=none
+        ninja -C build clang-format-check
+  test:
+    needs:
+    - format-check
+    runs-on: alpine-pod
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+        meson: [meson, muon]
+        include:
+        # tcc gets no meson entry: meson has no tcc support.
+        - cc: tcc
+          meson: muon
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/cache@v4
+      with:
+        path: ~/.apk-cache
+        key: apk-${{ hashFiles('.forgejo/workflows/ci.yml') }}
+        restore-keys: |
+          apk-
+    - name: setup
+      run: |
+        mkdir -p "$HOME/.apk-cache"
+        sudo apk add --cache-dir "$HOME/.apk-cache" --update-cache $APK_PACKAGES
+    - name: configure
+      env:
+        CC: ${{ matrix.cc }}
+        MESON: ${{ matrix.meson }}
+      run: $MESON setup -Dwerror=true -Db_sanitize=none build
+    - name: build
+      working-directory: build
+      run: samu
+    - name: test
+      working-directory: build
+      env:
+        MESON: ${{ matrix.meson }}
+      run: $MESON test
+  dist:
+    needs:
+    - test
+    runs-on: alpine-pod
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/cache@v4
+      with:
+        path: ~/.apk-cache
+        key: apk-${{ hashFiles('.forgejo/workflows/ci.yml') }}
+        restore-keys: |
+          apk-
+    - name: setup
+      run: |
+        mkdir -p "$HOME/.apk-cache"
+        sudo apk add --cache-dir "$HOME/.apk-cache" --update-cache $APK_PACKAGES bash curl jq
+    - name: dist
+      run: |
+        meson setup --buildtype=release -Db_sanitize=none build
+        meson dist -C build --formats xztar
+    - name: version check
+      if: github.ref_type == 'tag'
+      run: |
+        version=$(meson introspect build --projectinfo | jq -r .version)
+        if [ "v$version" != "${{ github.ref_name }}" ]; then
+          echo "meson.build says $version, the tag says ${{ github.ref_name }}" >&2
+          exit 1
+        fi
+        ls -l build/meson-dist
+    - name: release
+      if: github.ref_type == 'tag'
+      uses: https://code.forgejo.org/actions/forgejo-release@v2
+      with:
+        direction: upload
+        url: ${{ github.server_url }}
+        repo: ${{ github.repository }}
+        tag: ${{ github.ref_name }}
+        token: ${{ secrets.GITHUB_TOKEN }}
+        release-dir: build/meson-dist
