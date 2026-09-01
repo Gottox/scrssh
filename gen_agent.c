@@ -18,7 +18,8 @@ main(void) {
 		if ((p = strchr(line, '#'))) {
 			*p = 0;
 		}
-		for (p = &line[strlen(line) - 1]; strchr(" \t\n", *p); p--) {
+		for (p = &line[strlen(line) - 1]; p >= line && strchr(" \t\n", *p);
+			 p--) {
 			*p = 0;
 		}
 		for (p = line; *p && *p != '\n' && *p != '#'; p++) {
