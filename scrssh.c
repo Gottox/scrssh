@@ -2,6 +2,8 @@
  * Copyright (C) 2026 Enno Boland <g@s01.de>
  */
 
+#define _POSIX_C_SOURCE 200809L
+
 #include <SDL3/SDL.h>
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -28,12 +30,12 @@ struct {
 	pid_t child;
 	int input_fd;
 	int video_fd;
-	Uint32 wake;
 	SDL_Thread *decoder;
+	SDL_Mutex *locks[2];
+	AVFrame *frames[2];
+	SDL_AtomicU32 ready;
 	SDL_Renderer *renderer;
 	SDL_Texture *texture;
-	AVFrame *frame;
-	const char *error;
 } app = {0};
 
 static void
@@ -49,7 +51,8 @@ die(const char *fmt, ...) {
 static void
 ssh_spawn(char **argv, size_t argc) {
 	const char *post_argv[] = {
-			"printf '" MARKER("login") "';", "exec", "python3 -u -c", AGENT, NULL};
+			"printf '" MARKER("login") "';", "exec", "python3 -u -c", AGENT,
+			NULL};
 	if (app.use_sudo) {
 		post_argv[1] = "exec sudo -S";
 	}
@@ -197,75 +200,70 @@ send_config(int fd, const char **config) {
 	}
 }
 
-static void
-decoder_failed(const char *message) {
-	SDL_Event event = {0};
-	event.type = app.wake;
-	event.user.data2 = (void *)message;
-	SDL_PushEvent(&event);
+static unsigned int
+publish(AVFrame *decoded, unsigned int back_idx) {
+	unsigned int front_idx = !back_idx;
+
+	av_frame_unref(app.frames[back_idx]);
+	av_frame_move_ref(app.frames[back_idx], decoded);
+
+	SDL_LockMutex(app.locks[front_idx]);
+	SDL_AddAtomicU32(&app.ready, 1);
+	SDL_UnlockMutex(app.locks[back_idx]);
+
+	SDL_PushEvent(&(SDL_Event){.type = SDL_EVENT_USER});
+
+	return front_idx;
 }
 
-static void
-publish(AVFrame *decoded) {
-	AVFrame *sent = av_frame_alloc();
-	if (!sent) {
-		return;
-	}
-	av_frame_move_ref(sent, decoded);
-
-	SDL_Event event = {0};
-	event.type = app.wake;
-	event.user.data1 = sent;
-	if (!SDL_PushEvent(&event)) {
-		av_frame_free(&sent);
-	}
-}
-
-static bool
+static const char *
 decode_packet(
-		AVCodecContext *decoder, int stream, AVPacket *packet,
-		AVFrame *decoded) {
+		AVCodecContext *decoder, int stream, AVPacket *packet, AVFrame *decoded,
+		unsigned int *back_idx) {
 	if (packet->stream_index != stream ||
 		avcodec_send_packet(decoder, packet) < 0) {
-		return true;
+		return NULL;
 	}
 
 	while (avcodec_receive_frame(decoder, decoded) >= 0) {
 		if (decoded->format != AV_PIX_FMT_YUV420P) {
-			decoder_failed(
-					"the remote sent a pixel format scrssh cannot show; "
-					"kmsgrab and VAAPI produce 8-bit 4:2:0");
-			return false;
+			return "the remote sent a pixel format scrssh cannot show; "
+				   "kmsgrab and VAAPI produce 8-bit 4:2:0";
 		}
-		publish(decoded);
+		*back_idx = publish(decoded, *back_idx);
 	}
 
-	return true;
+	return NULL;
 }
 
 static int
-decode(void *arg) {
+run_decode(void *arg) {
 	(void)arg;
 
 	char url[32];
 	snprintf(url, sizeof(url), "pipe:%d", app.video_fd);
 
-	AVFormatContext *format = avformat_alloc_context();
+	const char *error = NULL;
+	AVFormatContext *format = NULL;
+	AVCodecContext *decoder = NULL;
+	AVPacket *packet = NULL;
+	AVFrame *decoded = NULL;
+
+	unsigned int back_idx = !(SDL_GetAtomicU32(&app.ready) % 2);
+	SDL_LockMutex(app.locks[back_idx]);
+
+	format = avformat_alloc_context();
 	if (!format) {
-		decoder_failed("could not set up the demuxer");
-		return 0;
+		error = "could not set up the demuxer";
+		goto done;
 	}
 	format->probesize = 32 * 1024;
 	format->max_analyze_duration = 100000;
 	format->fps_probe_size = 0;
 
-	AVCodecContext *decoder = NULL;
-	AVPacket *packet = NULL;
-	AVFrame *decoded = NULL;
-
 	if (avformat_open_input(
 				&format, url, av_find_input_format("mpegts"), NULL) < 0) {
-		decoder_failed("could not open the remote video stream");
+		error = "could not open the remote video stream";
 		goto done;
 	}
 	const AVCodec *codec = NULL;
@@ -273,7 +271,7 @@ decode(void *arg) {
 	if (avformat_find_stream_info(format, NULL) < 0 ||
 		(stream = av_find_best_stream(
 				 format, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0)) < 0) {
-		decoder_failed("the remote stream contains no video");
+		error = "the remote stream contains no video";
 		goto done;
 	}
 
@@ -282,30 +280,35 @@ decode(void *arg) {
 	if (!packet || !decoded || !(decoder = avcodec_alloc_context3(codec)) ||
 		avcodec_parameters_to_context(
 				decoder, format->streams[stream]->codecpar) < 0) {
-		decoder_failed("could not open the H.264 decoder");
+		error = "could not open the H.264 decoder";
 		goto done;
 	}
 	decoder->flags |= AV_CODEC_FLAG_LOW_DELAY;
 	if (avcodec_open2(decoder, codec, NULL) < 0) {
-		decoder_failed("could not open the H.264 decoder");
+		error = "could not open the H.264 decoder";
 		goto done;
 	}
 
 	while (av_read_frame(format, packet) >= 0) {
-		bool more = decode_packet(decoder, stream, packet, decoded);
+		error = decode_packet(decoder, stream, packet, decoded, &back_idx);
 		av_packet_unref(packet);
-		if (!more) {
+		if (error) {
 			goto done;
 		}
 	}
 
-	decoder_failed("the remote video stream ended");
+	error = "the remote video stream ended";
 
 done:
+	SDL_UnlockMutex(app.locks[back_idx]);
 	av_frame_free(&decoded);
 	av_packet_free(&packet);
 	avcodec_free_context(&decoder);
 	avformat_close_input(&format);
+	if (error) {
+		SDL_PushEvent(&(SDL_Event){.user.type = SDL_EVENT_USER,
+								   .user.data1 = (void *)error});
+	}
 	return 0;
 }
 
@@ -417,7 +420,8 @@ create_window(int width, int height) {
 
 static void
 redraw(void) {
-	if (SDL_HasEvent(app.wake) || SDL_HasEvent(SDL_EVENT_WINDOW_RESIZED) ||
+	if (SDL_HasEvent(SDL_EVENT_USER) ||
+		SDL_HasEvent(SDL_EVENT_WINDOW_RESIZED) ||
 		SDL_HasEvent(SDL_EVENT_QUIT)) {
 		return;
 	}
@@ -427,14 +431,23 @@ redraw(void) {
 	SDL_RenderPresent(app.renderer);
 }
 
-static void
-run(void) {
+static const char *
+run_ui(void) {
+	const char *error = NULL;
+
 	if (!SDL_Init(SDL_INIT_VIDEO)) {
 		die("could not initialise SDL: %s", SDL_GetError());
 	}
-	app.wake = SDL_RegisterEvents(1);
 
-	app.decoder = SDL_CreateThread(decode, "decoder", NULL);
+	app.frames[0] = av_frame_alloc();
+	app.frames[1] = av_frame_alloc();
+	app.locks[0] = SDL_CreateMutex();
+	app.locks[1] = SDL_CreateMutex();
+	if (!app.frames[0] || !app.frames[1] || !app.locks[0] || !app.locks[1]) {
+		die("out of memory");
+	}
+
+	app.decoder = SDL_CreateThread(run_decode, "decoder", NULL);
 	if (!app.decoder) {
 		die("could not start the decoder thread: %s", SDL_GetError());
 	}
@@ -489,28 +502,25 @@ run(void) {
 			};
 			send_input(wheel, SDL_arraysize(wheel));
 		} break;
-		default: {
-			if (event.type != app.wake) {
-				break;
-			} else if (!event.user.data1) {
-				app.error = event.user.data2;
+		case SDL_EVENT_USER: {
+			if (event.user.data1) {
+				error = event.user.data1;
 				goto out;
-			}
-			av_frame_free(&app.frame);
-			app.frame = event.user.data1;
-
-			if (SDL_HasEvent(app.wake)) {
+			} else if (SDL_HasEvent(SDL_EVENT_USER)) {
 				break;
 			}
 
+			unsigned int front_idx = SDL_GetAtomicU32(&app.ready) % 2;
+			SDL_LockMutex(app.locks[front_idx]);
+			AVFrame *frame = app.frames[front_idx];
 			if (!app.renderer) {
-				create_window(app.frame->width, app.frame->height);
+				create_window(frame->width, frame->height);
 			}
 			SDL_UpdateYUVTexture(
-					app.texture, NULL, app.frame->data[0],
-					app.frame->linesize[0], app.frame->data[1],
-					app.frame->linesize[1], app.frame->data[2],
-					app.frame->linesize[2]);
+					app.texture, NULL, frame->data[0], frame->linesize[0],
+					frame->data[1], frame->linesize[1], frame->data[2],
+					frame->linesize[2]);
+			SDL_UnlockMutex(app.locks[front_idx]);
 			redraw();
 		} break;
 		}
@@ -520,7 +530,10 @@ out:
 	kill(app.child, SIGTERM);
 	SDL_WaitThread(app.decoder, NULL);
 
-	av_frame_free(&app.frame);
+	av_frame_free(&app.frames[0]);
+	av_frame_free(&app.frames[1]);
+	SDL_DestroyMutex(app.locks[0]);
+	SDL_DestroyMutex(app.locks[1]);
 	SDL_DestroyTexture(app.texture);
 	if (app.renderer) {
 		SDL_Window *window = SDL_GetRenderWindow(app.renderer);
@@ -528,6 +541,8 @@ out:
 		SDL_DestroyWindow(window);
 	}
 	SDL_Quit();
+
+	return error;
 }
 
 static void
@@ -550,7 +565,8 @@ usage(void) {
 		"\n"
 		"options:\n"
 		"  -s         run the agent under `sudo -S`\n"
-		"  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]\n"
+		"  -d <PATH>  DRM device to capture      [default: "
+		"/dev/dri/card0]\n"
 		"  -C <N>     capture a specific CRTC\n"
 		"  -P <N>     capture a specific plane\n"
 		"  -f <N>     capture frame rate         [default: 30]\n"
@@ -601,11 +617,11 @@ main(int argc, char **argv) {
 	send_config(app.input_fd, config);
 	fcntl(app.input_fd, F_SETFL, O_NONBLOCK);
 
-	run();
+	const char *error = run_ui();
 	waitpid(app.child, NULL, 0);
 
-	if (app.error) {
-		die("%s", app.error);
+	if (error) {
+		die("%s", error);
 	}
 	return 0;
 }
