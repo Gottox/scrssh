@@ -133,6 +133,11 @@ jobs:
           exit 1
         fi
         ls -l build/meson-dist
+    # The token is left to the action, which defaults to ${{ forge.token }} --
+    # the automatic one. Naming secrets.GITHUB_TOKEN here instead expands to
+    # nothing on Forgejo, where GITHUB_TOKEN is an environment variable rather
+    # than a secret, and an unauthenticated release POST answers 404 rather
+    # than 403, so it reads as a wrong URL and is not.
     - name: release
       if: github.ref_type == 'tag'
       uses: https://code.forgejo.org/actions/forgejo-release@v2
@@ -141,5 +146,4 @@ jobs:
         url: ${{ github.server_url }}
         repo: ${{ github.repository }}
         tag: ${{ github.ref_name }}
-        token: ${{ secrets.GITHUB_TOKEN }}
         release-dir: build/meson-dist
