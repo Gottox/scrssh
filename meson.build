@@ -6,7 +6,11 @@ project(
     'c',
     version: '0.1.0',
     license: 'GPL-2.0-only',
-    default_options: ['c_std=c99', 'warning_level=3', 'buildtype=debugoptimized'],
+    default_options: [
+        'c_std=c99',
+        'warning_level=3',
+        'buildtype=debugoptimized',
+    ],
 )
 
 agent_h = custom_target(
