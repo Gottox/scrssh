@@ -149,5 +149,6 @@ jobs:
         url: ${{ github.server_url }}
         repo: ${{ github.repository }}
         tag: ${{ github.ref_name }}
+        sha: ${{ github.sha }}
         token: ${{ secrets.RELEASE_TOKEN }}
         release-dir: build/meson-dist
