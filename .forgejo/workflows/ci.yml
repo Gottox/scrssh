@@ -1,16 +1,4 @@
 name: CI
-# Every commit and pull request is formatted, built five ways, and packed into
-# the source tarball a release would ship. Pushing a version tag adds the two
-# steps that publish it to Codeberg -- and since dist waits on the other jobs,
-# nothing is released that did not build everywhere first.
-#
-# meson dist is a check of its own: it unpacks the tarball it just built into a
-# fresh tree and builds, tests and installs it there, which is what catches a
-# file that was never added to git.
-#
-# Sanitizers are off everywhere. The working default is an address-sanitised
-# debug build, which is neither what gets shipped nor what every compiler here
-# can link.
 on:
   push:
     branches:
@@ -74,7 +62,6 @@ jobs:
         cc: [gcc, clang]
         meson: [meson, muon]
         include:
-        # tcc gets no meson entry: meson has no tcc support.
         - cc: tcc
           meson: muon
     steps:
@@ -133,14 +120,6 @@ jobs:
           exit 1
         fi
         ls -l build/meson-dist
-    # RELEASE_TOKEN is an application token with write:repository, kept as a
-    # repository secret. The automatic token cannot create a release here,
-    # neither as secrets.GITHUB_TOKEN nor as the action's ${{ forge.token }}
-    # default -- and an unauthorised release POST answers 404 rather than 403,
-    # so it reads as a wrong URL and is not.
-    #
-    # Do not add verbose: true to this step. It turns on set -x in the action,
-    # which traces the token into a log anyone can read.
     - name: release
       if: github.ref_type == 'tag'
       uses: https://code.forgejo.org/actions/forgejo-release@v2
@@ -150,5 +129,5 @@ jobs:
         repo: ${{ github.repository }}
         tag: ${{ github.ref_name }}
         sha: ${{ github.sha }}
-        token: ${{ secrets.RELEASE_TOKEN }}
+        token: ${{ secrets.TOKEN }}
         release-dir: build/meson-dist
