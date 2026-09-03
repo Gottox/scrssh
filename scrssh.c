@@ -311,8 +311,8 @@ done:
 	avcodec_free_context(&decoder);
 	avformat_close_input(&format);
 	if (error) {
-		SDL_PushEvent(&(SDL_Event){.user.type = SDL_EVENT_USER,
-								   .user.data1 = (void *)error});
+		SDL_PushEvent(&(SDL_Event){
+				.user.type = SDL_EVENT_USER, .user.data1 = (void *)error});
 	}
 	return 0;
 }
