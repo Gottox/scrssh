@@ -32,7 +32,7 @@ jobs:
     runs-on: alpine-pod
     steps:
     - uses: actions/checkout@v7
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.apk-cache
         key: apk-${{ hashFiles('.forgejo/workflows/ci.yml') }}
@@ -66,7 +66,7 @@ jobs:
           meson: muon
     steps:
     - uses: actions/checkout@v7
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.apk-cache
         key: apk-${{ hashFiles('.forgejo/workflows/ci.yml') }}
@@ -97,7 +97,7 @@ jobs:
     - uses: actions/checkout@v7
       with:
         fetch-depth: 0
-    - uses: actions/cache@v4
+    - uses: actions/cache@v6
       with:
         path: ~/.apk-cache
         key: apk-${{ hashFiles('.forgejo/workflows/ci.yml') }}
