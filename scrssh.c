@@ -25,7 +25,7 @@ static const char AGENT[] = {
 
 struct {
 	char title[256];
-	bool use_sudo;
+	char escalation_method;
 	struct termios tio;
 	pid_t child;
 	int input_fd;
@@ -53,8 +53,13 @@ ssh_spawn(char **argv, size_t argc) {
 	const char *post_argv[] = {
 			"printf '" MARKER("login") "';", "exec", "python3 -u -c", AGENT,
 			NULL};
-	if (app.use_sudo) {
+	switch (app.escalation_method) {
+	case 's':
 		post_argv[1] = "exec sudo -S";
+		break;
+	case 'a':
+		post_argv[1] = "exec doas -n";
+		break;
 	}
 
 	char **exec_argv =
@@ -306,8 +311,8 @@ done:
 	avcodec_free_context(&decoder);
 	avformat_close_input(&format);
 	if (error) {
-		SDL_PushEvent(&(SDL_Event){
-				.user.type = SDL_EVENT_USER, .user.data1 = (void *)error});
+		SDL_PushEvent(&(SDL_Event){.user.type = SDL_EVENT_USER,
+								   .user.data1 = (void *)error});
 	}
 	return 0;
 }
@@ -565,6 +570,7 @@ usage(void) {
 		"\n"
 		"options:\n"
 		"  -s         run the agent under `sudo -S`\n"
+		"  -a         run the agent under `doas -n`\n"
 		"  -d <PATH>  DRM device to capture      [default: "
 		"/dev/dri/card0]\n"
 		"  -C <N>     capture a specific CRTC\n"
@@ -580,7 +586,7 @@ int
 main(int argc, char **argv) {
 	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
-	for (int o; (o = getopt(argc, argv, "+d:C:P:f:B:e:sh")) != -1;) {
+	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:B:e:sh")) != -1;) {
 		switch (o) {
 #define CFG(c, v) \
 	case c: \
@@ -593,8 +599,9 @@ main(int argc, char **argv) {
 			CFG('B', CONFIG_BITRATE)
 			CFG('e', CONFIG_ENCODER)
 #undef CFG
+		case 'a':
 		case 's':
-			app.use_sudo = true;
+			app.escalation_method = o;
 			break;
 		default:
 			usage();

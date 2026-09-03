@@ -24,6 +24,7 @@ https://codeberg.org/Gottox/scrssh
 
 options:
   -s         run the agent under `sudo -S`
+  -a         run the agent under `doas -n`
   -d <PATH>  DRM device to capture      [default: /dev/dri/card0]
   -C <N>     capture a specific CRTC
   -P <N>     capture a specific plane
@@ -43,7 +44,7 @@ scrssh -- -p 2222 -J user@jumphost.com user@example.com
 ```
 
 Capturing the screen needs `CAP_SYS_ADMIN`. If you cannot log in as root, `-s`
-runs the agent under `sudo`:
+runs the agent under `sudo` or `-a` for `doas`:
 
 ```bash
 scrssh -s -- -p 2222 user@example.com
@@ -107,6 +108,15 @@ The framebuffer is 10 bit. Disable HDR on the remote host.
 > ```
 
 scrssh does not support mode switches during a session.
+
+> ```
+> doas: Authentication required
+> the remote agent did not start
+> ```
+
+When using `-a` make sure `doas` on the remote host is configure to permit the
+`python3` command without prompting for a password or, preferably, use `-s` to use `sudo`
+escalation instead.
 
 ## License
 
