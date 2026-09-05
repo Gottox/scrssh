@@ -36,6 +36,7 @@ struct {
 	SDL_AtomicU32 ready;
 	SDL_Renderer *renderer;
 	SDL_Texture *texture;
+	bool fullscreen;
 } app = {0};
 
 static void
@@ -403,9 +404,13 @@ create_window(int width, int height) {
 	}
 
 	SDL_Window *window;
+	SDL_WindowFlags flags =
+			SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
+	if (app.fullscreen) {
+		flags |= SDL_WINDOW_FULLSCREEN;
+	}
 	if (!SDL_CreateWindowAndRenderer(
-				app.title, (int)window_w, (int)window_h,
-				SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY, &window,
+				app.title, (int)window_w, (int)window_h, flags, &window,
 				&app.renderer)) {
 		die("could not create the window: %s", SDL_GetError());
 	}
@@ -586,7 +591,7 @@ int
 main(int argc, char **argv) {
 	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
-	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:B:e:sh")) != -1;) {
+	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:FB:e:sh")) != -1;) {
 		switch (o) {
 #define CFG(c, v) \
 	case c: \
@@ -602,6 +607,9 @@ main(int argc, char **argv) {
 		case 'a':
 		case 's':
 			app.escalation_method = o;
+			break;
+		case 'F':
+			app.fullscreen = true;
 			break;
 		default:
 			usage();
