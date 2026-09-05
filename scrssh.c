@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL.h>
 #include <arpa/inet.h>
+#include <assert.h>
 #include <fcntl.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
@@ -19,13 +20,28 @@
 
 #define MARKER(s) "\xff\xfe" s "\xfe\xff\n"
 
+enum RemoteConfig {
+	REMOTE_CONFIG_DEVICE,
+	REMOTE_CONFIG_CRTC,
+	REMOTE_CONFIG_PLANE,
+	REMOTE_CONFIG_FPS,
+	REMOTE_CONFIG_BITRATE,
+	REMOTE_CONFIG_ENCODER,
+	REMOTE_CONFIG_COUNT,
+};
+
+enum LocalConfig {
+	LOCAL_CONFIG_FULLSCREEN = 'F',
+	LOCAL_CONFIG_SUDO = 's',
+	LOCAL_CONFIG_DOAS = 'a',
+};
+
 static const char AGENT[] = {
 #include "agent.h"
 };
 
 struct {
 	char title[256];
-	char escalation_method;
 	struct termios tio;
 	pid_t child;
 	int input_fd;
@@ -36,7 +52,7 @@ struct {
 	SDL_AtomicU32 ready;
 	SDL_Renderer *renderer;
 	SDL_Texture *texture;
-	bool fullscreen;
+	bool config[128];
 } app = {0};
 
 static void
@@ -54,13 +70,10 @@ ssh_spawn(char **argv, size_t argc) {
 	const char *post_argv[] = {
 			"printf '" MARKER("login") "';", "exec", "python3 -u -c", AGENT,
 			NULL};
-	switch (app.escalation_method) {
-	case 's':
+	if (app.config[LOCAL_CONFIG_SUDO]) {
 		post_argv[1] = "exec sudo -S";
-		break;
-	case 'a':
+	} else if (app.config[LOCAL_CONFIG_DOAS]) {
 		post_argv[1] = "exec doas -n";
-		break;
 	}
 
 	char **exec_argv =
@@ -100,16 +113,6 @@ ssh_spawn(char **argv, size_t argc) {
 	app.video_fd = pout[0];
 	app.child = pid;
 }
-
-enum CONFIG {
-	CONFIG_DEVICE,
-	CONFIG_CRTC,
-	CONFIG_PLANE,
-	CONFIG_FPS,
-	CONFIG_BITRATE,
-	CONFIG_ENCODER,
-	CONFIG_COUNT,
-};
 
 static void
 put(int fd, const void *data, size_t size) {
@@ -192,7 +195,7 @@ greeting(const char *marker, int in) {
 static void
 send_config(int fd, const char **config) {
 	size_t length = 0;
-	for (size_t i = 0; i < CONFIG_COUNT; i++) {
+	for (size_t i = 0; i < REMOTE_CONFIG_COUNT; i++) {
 		length += strlen(config[i]) + 1;
 	}
 	if (length > UINT16_MAX) {
@@ -201,7 +204,7 @@ send_config(int fd, const char **config) {
 
 	uint16_t header = htons(length);
 	put(fd, &header, sizeof(header));
-	for (size_t i = 0; i < CONFIG_COUNT; i++) {
+	for (size_t i = 0; i < REMOTE_CONFIG_COUNT; i++) {
 		put(fd, config[i], strlen(config[i]) + 1);
 	}
 }
@@ -406,7 +409,7 @@ create_window(int width, int height) {
 	SDL_Window *window;
 	SDL_WindowFlags flags =
 			SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-	if (app.fullscreen) {
+	if (app.config[LOCAL_CONFIG_FULLSCREEN]) {
 		flags |= SDL_WINDOW_FULLSCREEN;
 	}
 	if (!SDL_CreateWindowAndRenderer(
@@ -574,45 +577,42 @@ usage(void) {
 		"https://codeberg.org/Gottox/scrssh\n"
 		"\n"
 		"options:\n"
-		"  -s         run the agent under `sudo -S`\n"
-		"  -a         run the agent under `doas -n`\n"
-		"  -d <PATH>  DRM device to capture      [default: "
-		"/dev/dri/card0]\n"
-		"  -C <N>     capture a specific CRTC\n"
-		"  -P <N>     capture a specific plane\n"
-		"  -f <N>     capture frame rate         [default: 30]\n"
 		"  -B <RATE>  capped bitrate             [default: 500K]\n"
+		"  -C <N>     capture a specific CRTC\n"
+		"  -F         start in fullscreen mode\n"
+		"  -P <N>     capture a specific plane\n"
+		"  -a         run the agent under `doas -n`\n"
+		"  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]\n"
 		"  -e <NAME>  force an encoder           [default: ask the host]\n"
 		"             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264\n"
+		"  -f <N>     capture frame rate         [default: 30]\n"
+		"  -s         run the agent under `sudo -S`\n"
 		"  -h         show this help");
 }
 
 int
 main(int argc, char **argv) {
-	const char *config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
+	const char *remote_config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
 	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:FB:e:sh")) != -1;) {
 		switch (o) {
-#define CFG(c, v) \
+#define REMOTE_CFG(c, v) \
 	case c: \
-		config[v] = optarg; \
+		remote_config[v] = optarg; \
 		break;
-			CFG('d', CONFIG_DEVICE)
-			CFG('C', CONFIG_CRTC)
-			CFG('P', CONFIG_PLANE)
-			CFG('f', CONFIG_FPS)
-			CFG('B', CONFIG_BITRATE)
-			CFG('e', CONFIG_ENCODER)
+			REMOTE_CFG('d', REMOTE_CONFIG_DEVICE)
+			REMOTE_CFG('C', REMOTE_CONFIG_CRTC)
+			REMOTE_CFG('P', REMOTE_CONFIG_PLANE)
+			REMOTE_CFG('f', REMOTE_CONFIG_FPS)
+			REMOTE_CFG('B', REMOTE_CONFIG_BITRATE)
+			REMOTE_CFG('e', REMOTE_CONFIG_ENCODER)
 #undef CFG
-		case 'a':
-		case 's':
-			app.escalation_method = o;
-			break;
-		case 'F':
-			app.fullscreen = true;
+		case '?':
+			usage();
 			break;
 		default:
-			usage();
+			assert(o < (int)SDL_arraysize(app.config));
+			app.config[o] = true;
 		}
 	}
 	if (optind == argc) {
@@ -629,7 +629,7 @@ main(int argc, char **argv) {
 	echo_off();
 	greeting(MARKER("agent"), STDIN_FILENO);
 
-	send_config(app.input_fd, config);
+	send_config(app.input_fd, remote_config);
 	fcntl(app.input_fd, F_SETFL, O_NONBLOCK);
 
 	const char *error = run_ui();
