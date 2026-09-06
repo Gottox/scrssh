@@ -1,6 +1,6 @@
 # scrssh
 
-Viable TeamViewer/RustDesk alternative for Linux in under 1000 lines of C and
+Viable TeamViewer/RustDesk alternative for Linux in under 1500 lines of C and
 Python. `scrcpy` for the Linux admin.
 
 *scrssh* lets you view and control remote desktops and servers over SSH. Nothing
@@ -23,15 +23,16 @@ usage: scrssh [options] [--] <ssh arguments...>
 https://codeberg.org/Gottox/scrssh
 
 options:
-  -s         run the agent under `sudo -S`
+  -B <RATE>  capped bitrate             [default: 500K]
+  -C <N>     capture a specific CRTC
+  -F         start in fullscreen mode   [hotkey: LAlt LAlt F]
+  -P <N>     capture a specific plane
   -a         run the agent under `doas -n`
   -d <PATH>  DRM device to capture      [default: /dev/dri/card0]
-  -C <N>     capture a specific CRTC
-  -P <N>     capture a specific plane
-  -f <N>     capture frame rate         [default: 30]
-  -B <RATE>  capped bitrate             [default: 500K]
   -e <NAME>  force an encoder           [default: ask the host]
              h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264
+  -f <N>     capture frame rate         [default: 30]
+  -s         run the agent under `sudo -S`
   -h         show this help
 ```
 
@@ -49,6 +50,14 @@ runs the agent under `sudo` or `-a` for `doas`:
 ```bash
 scrssh -s -- -p 2222 user@example.com
 ```
+
+## Hotkeys
+
+Every key press is forwarded to the remote host, so *scrssh* hides its own
+shortcuts behind a prefix: tap `Left Alt` twice within half a second, then
+press the command key within the next two seconds.
+
+* `LAlt LAlt F`: toggle fullscreen, the same state as `-F`
 
 ## Requirements
 

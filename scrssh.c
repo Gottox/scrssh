@@ -31,7 +31,7 @@ enum RemoteConfig {
 };
 
 enum LocalConfig {
-	LOCAL_CONFIG_FULLSCREEN = 'F',
+	LOCAL_CONFIG_FS = 'F',
 	LOCAL_CONFIG_SUDO = 's',
 	LOCAL_CONFIG_DOAS = 'a',
 };
@@ -50,9 +50,11 @@ struct {
 	SDL_Mutex *locks[2];
 	AVFrame *frames[2];
 	SDL_AtomicU32 ready;
+	SDL_Window *window;
 	SDL_Renderer *renderer;
 	SDL_Texture *texture;
 	bool config[128];
+	Uint64 cmd_timestamp;
 } app = {0};
 
 static void
@@ -406,14 +408,13 @@ create_window(int width, int height) {
 		}
 	}
 
-	SDL_Window *window;
 	SDL_WindowFlags flags =
 			SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY;
-	if (app.config[LOCAL_CONFIG_FULLSCREEN]) {
+	if (app.config[LOCAL_CONFIG_FS]) {
 		flags |= SDL_WINDOW_FULLSCREEN;
 	}
 	if (!SDL_CreateWindowAndRenderer(
-				app.title, (int)window_w, (int)window_h, flags, &window,
+				app.title, (int)window_w, (int)window_h, flags, &app.window,
 				&app.renderer)) {
 		die("could not create the window: %s", SDL_GetError());
 	}
@@ -428,7 +429,7 @@ create_window(int width, int height) {
 	SDL_SetRenderLogicalPresentation(
 			app.renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
 	SDL_SetWindowAspectRatio(
-			window, (float)width / height, (float)width / height);
+			app.window, (float)width / height, (float)width / height);
 }
 
 static void
@@ -442,6 +443,20 @@ redraw(void) {
 	SDL_RenderClear(app.renderer);
 	SDL_RenderTexture(app.renderer, app.texture, NULL, NULL);
 	SDL_RenderPresent(app.renderer);
+}
+
+static void
+handle_command(SDL_KeyboardEvent k) {
+	assert(app.window);
+	switch (k.scancode) {
+	case SDL_SCANCODE_F:
+		app.config[LOCAL_CONFIG_FS] = !app.config[LOCAL_CONFIG_FS];
+		SDL_SetWindowFullscreen(app.window, app.config[LOCAL_CONFIG_FS]);
+		break;
+	default:
+		break;
+	}
+	app.cmd_timestamp = 0;
 }
 
 static const char *
@@ -466,6 +481,7 @@ run_ui(void) {
 	}
 
 	SDL_Event event;
+	Uint64 cmd_timestamp = 0;
 	while (SDL_WaitEvent(&event)) {
 		if (app.renderer) {
 			SDL_ConvertEventToRenderCoordinates(app.renderer, &event);
@@ -479,6 +495,16 @@ run_ui(void) {
 			redraw();
 		} break;
 		case SDL_EVENT_KEY_DOWN:
+			if (event.key.scancode == SDL_SCANCODE_LALT) {
+				if (cmd_timestamp + 500e+6 > event.key.timestamp) {
+					app.cmd_timestamp = cmd_timestamp;
+				}
+				cmd_timestamp = event.key.timestamp;
+			} else if (app.cmd_timestamp + 2000e+6 > event.key.timestamp) {
+				handle_command(event.key);
+				break;
+			}
+			/* fallthrough */
 		case SDL_EVENT_KEY_UP: {
 			if (event.key.repeat) {
 				break;
@@ -579,7 +605,7 @@ usage(void) {
 		"options:\n"
 		"  -B <RATE>  capped bitrate             [default: 500K]\n"
 		"  -C <N>     capture a specific CRTC\n"
-		"  -F         start in fullscreen mode\n"
+		"  -F         start in fullscreen mode   [hotkey: LAlt LAlt F]\n"
 		"  -P <N>     capture a specific plane\n"
 		"  -a         run the agent under `doas -n`\n"
 		"  -d <PATH>  DRM device to capture      [default: /dev/dri/card0]\n"
