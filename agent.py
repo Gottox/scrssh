@@ -51,6 +51,7 @@ ABS_X, ABS_Y = 0x00, 0x01
 REL_HWHEEL, REL_WHEEL = 0x06, 0x08
 BTN_LEFT, BTN_RIGHT, BTN_MIDDLE = 0x110, 0x111, 0x112
 BUTTONS = [BTN_LEFT, BTN_RIGHT, BTN_MIDDLE]
+KEY_RIGHTSHIFT = 54
 BUS_VIRTUAL = 0x06
 KEY_ADVERTISE_MAX = 248
 ABS_RANGE_MAX = 65535
@@ -89,6 +90,11 @@ class Uinput:
 
 	def inject(self, typ, code, value):
 		os.write(self.fd, struct.pack(FMT_INPUT_EVENT, 0, 0, typ, code, value))
+
+	def tap(self, key):
+		for value in (1, 0):
+			self.inject(EV_KEY, key, value)
+			self.inject(EV_SYN, 0, 0)
 
 # ---- Screen source: DRM
 #
@@ -164,6 +170,9 @@ class Drm:
 
 	def export(self, handle):
 		return self._ioctl(DRM_PRIME_TO_FD, FMT_PRIME, handle, 0, 0)[2]
+
+	def lit(self):
+		return any(self.plane(plane_id)[2] for plane_id in self._plane_ids())
 
 	def scanout_plane(self, crtc, requested):
 		if requested:
@@ -509,6 +518,15 @@ class Encoder:
 
 # ---- Main
 
+# A blanked display has no framebuffer to capture. Right Shift wakes it and
+# is harmless to whatever is focused.
+def wake(uinput, drm):
+	for _ in range(10):
+		if drm.lit():
+			return
+		uinput.tap(KEY_RIGHTSHIFT)
+		time.sleep(0.5)
+
 def replay_input(uinput):
 	try:
 		while True:
@@ -530,6 +548,7 @@ device, crtc, plane, fps, bitrate, wanted, limit, _ = config.split("\0")
 try:
 	uinput = Uinput()
 	drm = Drm(device)
+	wake(uinput, drm)
 	screen = Screen(drm, crtc, plane)
 	converter = Converter(drm, limit)
 	fb = screen.frame()
