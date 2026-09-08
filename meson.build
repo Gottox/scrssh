@@ -13,9 +13,21 @@ project(
     ],
 )
 
+pyminify = find_program('pyminify', required: get_option('minify'))
+
+agent_py = files('agent.py')
+if pyminify.found()
+    agent_py = custom_target(
+        'agent.min.py',
+        input: 'agent.py',
+        output: 'agent.min.py',
+        command: [pyminify, '--prefer-single-line', '--rename-globals', '@INPUT@', '-o', '@OUTPUT@'],
+    )
+endif
+
 agent_h = custom_target(
     'agent.h',
-    input: 'agent.py',
+    input: agent_py,
     output: 'agent.h',
     feed: true,
     capture: true,
