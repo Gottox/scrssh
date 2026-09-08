@@ -66,13 +66,24 @@ On the host:
 
 1. `sshd` running
 2. ffmpeg and python installed
-3. `CAP_SYS_ADMIN`, that is root or `-s`
-4. a screen or an HDMI dummy plug connected
+3. `libEGL`, `libGLESv2` and `libgbm`, which come with every GPU driver
+4. `CAP_SYS_ADMIN`, that is root or `-s`
+5. a screen or an HDMI dummy plug connected
 
 On the client:
 
 1. `ssh`
 2. `scrssh`
+
+## Capture
+
+The agent imports the scanout buffer into EGL with
+`EGL_EXT_image_dma_buf_import_modifiers`, converts it to NV12 with a small
+OpenGL ES shader, reads the planes back and pipes the frames to ffmpeg. The
+GPU driver resolves tiling and render compression on the way, so linear,
+tiled and compressed framebuffers all come out the same, and the encoders get
+the format they want without a CPU conversion. All of this needs only the
+`libEGL`, `libGLESv2` and `libgbm` that ship with every GPU driver.
 
 ## Encoders
 
@@ -93,11 +104,7 @@ scrssh -e libx264 user@example.com
 ## Troubleshooting
 
 > ```
-> [in#0 @ 0x5566dacb3f80] No handle set on framebuffer: maybe you need some additional capabilities?
-> [in#0 @ 0x5566dacb3c80] Error opening input: Invalid argument
-> Error opening input file -.
-> Error opening input files: Invalid argument
-> [mpegts @ 0x7f939c010940] Could not detect TS packet size, defaulting to non-FEC/DVHS
+> the framebuffer is not accessible; capturing needs root
 > the remote stream contains no video
 > ```
 
@@ -105,19 +112,11 @@ The remote host does not have the required permissions. Either log in as root
 or add `-s` to run the agent under `sudo`.
 
 > ```
-> [in#0 @ 0x560f3e28ff80] Framebuffer pixel format 30334241 is not a known supported format.
-> [in#0 @ 0x560f3e28fc80] Error opening input: Invalid argument
-> ```
-
-The framebuffer is 10 bit. Disable HDR on the remote host.
-
-> ```
-> [in#0/kmsgrab @ 0x5617da113f00] Plane 79 framebuffer format changed: now 34325258.
-> [in#0/kmsgrab @ 0x5617da113c00] Error during demuxing: Input/output error
 > the remote video stream ended
 > ```
 
-scrssh does not support mode switches during a session.
+The screen changed its resolution; scrssh does not support mode switches
+during a session.
 
 > ```
 > doas: Authentication required
@@ -127,6 +126,49 @@ scrssh does not support mode switches during a session.
 When using `-a` make sure `doas` on the remote host is configure to permit the
 `python3` command without prompting for a password or, preferably, use `-s` to use `sudo`
 escalation instead.
+
+> ```
+> Traceback (most recent call last):
+>   File "<string>", line 135, in <module>
+>     name, options = choose(candidates)
+>                     ~~~~~~^^^^^^^^^^^^
+>   File "<string>", line 118, in choose
+>     if run(command(*candidate, True), stdout=subprocess.PIPE).stdout:
+>        ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>   File "<string>", line 96, in run
+>     return subprocess.run(argv, stdin=subprocess.DEVNULL,
+>            ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>     					  stderr=subprocess.DEVNULL, **kwargs)
+>            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>   File "/usr/lib/python3.14/subprocess.py", line 554, in run
+>     with Popen(*popenargs, **kwargs) as process:
+>          ~~~~~^^^^^^^^^^^^^^^^^^^^^^
+>   File "/usr/lib/python3.14/subprocess.py", line 1038, in __init__
+>     self._execute_child(args, executable, preexec_fn, close_fds,
+>     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>                         pass_fds, cwd, env,
+>                         ^^^^^^^^^^^^^^^^^^^
+>     ...<5 lines>...
+>                         gid, gids, uid, umask,
+>                         ^^^^^^^^^^^^^^^^^^^^^^
+>                         start_new_session, process_group)
+>                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+>   File "/usr/lib/python3.14/subprocess.py", line 1989, in _execute_child
+>     raise child_exception_type(errno_num, err_msg, err_filename)
+> FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'
+> the remote stream contains no video
+> ```
+
+The remote host does not have `ffmpeg` installed.
+
+> ```
+> libEGL.so.1: cannot open shared object file: No such file or directory
+> the remote stream contains no video
+> ```
+
+The host has no EGL. Install the GPU driver packages that provide `libEGL`,
+`libGLESv2` and `libgbm`; on Debian those are `libegl1`, `libgles2` and
+`libgbm1`.
 
 ## License
 

@@ -242,7 +242,7 @@ decode_packet(
 	while (avcodec_receive_frame(decoder, decoded) >= 0) {
 		if (decoded->format != AV_PIX_FMT_YUV420P) {
 			return "the remote sent a pixel format scrssh cannot show; "
-				   "kmsgrab and VAAPI produce 8-bit 4:2:0";
+				   "the agent produces 8-bit 4:2:0";
 		}
 		*back_idx = publish(decoded, *back_idx);
 	}
