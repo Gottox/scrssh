@@ -33,6 +33,7 @@ options:
              h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264
   -f <N>     capture frame rate         [default: 30]
   -s         run the agent under `sudo -S`
+  -u         run the agent under `su -T`
   -h         show this help
 ```
 
@@ -45,7 +46,7 @@ scrssh -- -p 2222 -J user@jumphost.com user@example.com
 ```
 
 Capturing the screen needs `CAP_SYS_ADMIN`. If you cannot log in as root, `-s`
-runs the agent under `sudo` or `-a` for `doas`:
+runs the agent under `sudo`, `-a` under `doas` and `-u` under `su`:
 
 ```bash
 scrssh -s -- -p 2222 user@example.com

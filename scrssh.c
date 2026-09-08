@@ -34,6 +34,7 @@ enum LocalConfig {
 	LOCAL_CONFIG_FS = 'F',
 	LOCAL_CONFIG_SUDO = 's',
 	LOCAL_CONFIG_DOAS = 'a',
+	LOCAL_CONFIG_SU = 'u',
 };
 
 static const char AGENT[] = {
@@ -76,6 +77,8 @@ ssh_spawn(char **argv, size_t argc) {
 		post_argv[1] = "exec sudo -S";
 	} else if (app.config[LOCAL_CONFIG_DOAS]) {
 		post_argv[1] = "exec doas -n";
+	} else if (app.config[LOCAL_CONFIG_SU]) {
+		post_argv[1] = "exec su -T -c 'exec \"$@\"' -- root _";
 	}
 
 	char **exec_argv =
@@ -613,6 +616,7 @@ usage(void) {
 		"             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264\n"
 		"  -f <N>     capture frame rate         [default: 30]\n"
 		"  -s         run the agent under `sudo -S`\n"
+		"  -u         run the agent under `su -T`\n"
 		"  -h         show this help");
 }
 
@@ -620,7 +624,7 @@ int
 main(int argc, char **argv) {
 	const char *remote_config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
 
-	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:FB:e:sh")) != -1;) {
+	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:FB:e:suh")) != -1;) {
 		switch (o) {
 #define REMOTE_CFG(c, v) \
 	case c: \
