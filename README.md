@@ -23,7 +23,7 @@ usage: scrssh [options] [--] <ssh arguments...>
 https://codeberg.org/Gottox/scrssh
 
 options:
-  -B <RATE>  capped bitrate             [default: 500K]
+  -B <RATE>  capped bitrate             [default: 10M]
   -C <N>     capture a specific CRTC
   -F         start in fullscreen mode   [hotkey: LAlt LAlt F]
   -P <N>     capture a specific plane

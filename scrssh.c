@@ -606,7 +606,7 @@ usage(void) {
 		"https://codeberg.org/Gottox/scrssh\n"
 		"\n"
 		"options:\n"
-		"  -B <RATE>  capped bitrate             [default: 500K]\n"
+		"  -B <RATE>  capped bitrate             [default: 10M]\n"
 		"  -C <N>     capture a specific CRTC\n"
 		"  -F         start in fullscreen mode   [hotkey: LAlt LAlt F]\n"
 		"  -P <N>     capture a specific plane\n"
@@ -622,7 +622,7 @@ usage(void) {
 
 int
 main(int argc, char **argv) {
-	const char *remote_config[] = {"/dev/dri/card0", "", "", "30", "500K", ""};
+	const char *remote_config[] = {"/dev/dri/card0", "", "", "30", "10M", ""};
 
 	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:FB:e:suh")) != -1;) {
 		switch (o) {
