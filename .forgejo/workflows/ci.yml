@@ -26,6 +26,7 @@ env:
     clang-extra-tools
     sdl3-dev
     ffmpeg-dev
+    pipx
 
 jobs:
   format-check:
@@ -42,6 +43,8 @@ jobs:
       run: |
         mkdir -p "$HOME/.apk-cache"
         sudo apk add --cache-dir "$HOME/.apk-cache" --update-cache $APK_PACKAGES
+        pipx install python-minifier
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
     - name: muon fmt
       run: |
         find . -path ./subprojects -prune -o \
@@ -76,6 +79,8 @@ jobs:
       run: |
         mkdir -p "$HOME/.apk-cache"
         sudo apk add --cache-dir "$HOME/.apk-cache" --update-cache $APK_PACKAGES
+        pipx install python-minifier
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
     - name: configure
       env:
         CC: ${{ matrix.cc }}
@@ -107,6 +112,8 @@ jobs:
       run: |
         mkdir -p "$HOME/.apk-cache"
         sudo apk add --cache-dir "$HOME/.apk-cache" --update-cache $APK_PACKAGES bash curl jq
+        pipx install python-minifier
+        echo "$HOME/.local/bin" >> "$GITHUB_PATH"
     - name: dist
       run: |
         meson setup --buildtype=release -Db_sanitize=none build
