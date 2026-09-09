@@ -8,13 +8,21 @@ is installed on the remote host and no daemon is left behind: the agent is a
 Python script that *scrssh* pipes over the connection, and it exits with the
 session. From command line to desktop takes about two seconds.
 
+Debian Gnome:
+
+![Gnome](./img/gnome.png)
+
+Debian KDE Plasma:
+
+![Gnome](./img/kde.png)
+
 Works on Bazzite:
 
-![Bazzite](./bazzite.jpg)
+![Bazzite](./img/bazzite.png)
 
 Works even on the Raspberry Pi 2:
 
-![Raspberry Pi 2](./rpi2.jpg)
+![Raspberry Pi 2](./img/rpi2.png)
 
 ## Usage
 
@@ -128,34 +136,7 @@ When using `-a` make sure `doas` on the remote host is configure to permit the
 escalation instead.
 
 > ```
-> Traceback (most recent call last):
->   File "<string>", line 135, in <module>
->     name, options = choose(candidates)
->                     ~~~~~~^^^^^^^^^^^^
->   File "<string>", line 118, in choose
->     if run(command(*candidate, True), stdout=subprocess.PIPE).stdout:
->        ~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
->   File "<string>", line 96, in run
->     return subprocess.run(argv, stdin=subprocess.DEVNULL,
->            ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
->     					  stderr=subprocess.DEVNULL, **kwargs)
->            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
->   File "/usr/lib/python3.14/subprocess.py", line 554, in run
->     with Popen(*popenargs, **kwargs) as process:
->          ~~~~~^^^^^^^^^^^^^^^^^^^^^^
->   File "/usr/lib/python3.14/subprocess.py", line 1038, in __init__
->     self._execute_child(args, executable, preexec_fn, close_fds,
->     ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
->                         pass_fds, cwd, env,
->                         ^^^^^^^^^^^^^^^^^^^
->     ...<5 lines>...
->                         gid, gids, uid, umask,
->                         ^^^^^^^^^^^^^^^^^^^^^^
->                         start_new_session, process_group)
->                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
->   File "/usr/lib/python3.14/subprocess.py", line 1989, in _execute_child
->     raise child_exception_type(errno_num, err_msg, err_filename)
-> FileNotFoundError: [Errno 2] No such file or directory: 'ffmpeg'
+> [Errno 2] No such file or directory: 'ffmpeg'
 > the remote stream contains no video
 > ```
 
