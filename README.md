@@ -8,22 +8,6 @@ is installed on the remote host and no daemon is left behind: the agent is a
 Python script that *scrssh* pipes over the connection, and it exits with the
 session. From command line to desktop takes about two seconds.
 
-Debian Gnome:
-
-![Gnome](./img/gnome.png)
-
-Debian KDE Plasma:
-
-![Gnome](./img/kde.png)
-
-Works on Bazzite:
-
-![Bazzite](./img/bazzite.png)
-
-Works even on the Raspberry Pi 2:
-
-![Raspberry Pi 2](./img/rpi2.png)
-
 ## Usage
 
 ```
@@ -155,3 +139,21 @@ The host has no EGL. Install the GPU driver packages that provide `libEGL`,
 
 *scrssh* is released under the GNU General Public License, version 2. See
 [LICENSE](./LICENSE) for the full text.
+
+## Screenshots
+
+Debian Gnome:
+
+![Gnome](./img/gnome.png)
+
+Debian KDE Plasma:
+
+![Gnome](./img/kde.png)
+
+Works on Bazzite:
+
+![Bazzite](./img/bazzite.png)
+
+Works even on the Raspberry Pi 2:
+
+![Raspberry Pi 2](./img/rpi2.png)
