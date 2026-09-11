@@ -21,7 +21,12 @@ if pyminify.found()
         'agent.min.py',
         input: 'agent.py',
         output: 'agent.min.py',
-        command: [pyminify, '--prefer-single-line', '--rename-globals', '@INPUT@', '-o', '@OUTPUT@'],
+        command: [
+            pyminify,
+            '--prefer-single-line',
+            '--rename-globals', '@INPUT@',
+            '-o', '@OUTPUT@',
+        ],
     )
 endif
 
