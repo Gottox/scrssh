@@ -248,15 +248,30 @@ void main() {
 }
 """
 
+def fit(w, h, limit):
+	max_w, _, max_h = limit.partition("x")
+	max_w, max_h = int(max_w or 0) or w, int(max_h or 0) or h
+	if w <= max_w and h <= max_h:
+		return w, h
+	elif w * max_h > h * max_w:
+		return max_w, h * max_w // w
+	else:
+		return w * max_h // h, max_h
+
 class Converter:
-	def __init__(self, drm, width, height):
+	def __init__(self, drm, source, limit):
 		self.drm = drm
+		w, h = fit(*source, limit)
+		# NV12 needs even dimensions and the luma pass packs 4 pixels per
+		# texel, so trim to multiples of 4 by 2. At most 3 columns and 1 row
+		# are lost.
+		self.size = w, h = max(w // 4 * 4, 4), max(h // 2 * 2, 2)
 		self._load_libraries()
 		self._open_context()
-		self._build_program(width, height)
-		self._make_target(width // 4, height * 3 // 2)
+		self._build_program(w, h)
+		self._make_target(w // 4, h * 3 // 2)
 		# One NV12 frame: the Y plane followed by the interleaved UV plane.
-		self.pixels = (ctypes.c_char * (width * height * 3 // 2))()
+		self.pixels = (ctypes.c_char * (w * h * 3 // 2))()
 		self.view = memoryview(self.pixels)
 
 	def _load_libraries(self):
@@ -407,15 +422,6 @@ class Screen:
 			raise OSError("the framebuffer is not accessible; capturing needs root")
 		# The mode the session started with. frame() stops when it changes.
 		self.source = fb[FB_WIDTH], fb[FB_HEIGHT]
-		# NV12 needs even dimensions and the luma pass packs 4 pixels per
-		# texel, so trim to multiples of 4 by 2. At most 3 columns and 1 row
-		# are lost.
-		self.width = fb[FB_WIDTH] // 4 * 4
-		self.height = fb[FB_HEIGHT] // 2 * 2
-		self.converter = Converter(self.drm, self.width, self.height)
-		# Convert one frame right away, so a driver that cannot import the
-		# buffer fails here rather than after ffmpeg has started.
-		self.frame()
 
 	def _current_framebuffer(self):
 		_, _, fb_id = self.drm.plane(self.plane_id)
@@ -428,7 +434,7 @@ class Screen:
 		fb = self._current_framebuffer()
 		if not fb or (fb[FB_WIDTH], fb[FB_HEIGHT]) != self.source:
 			return None
-		return self.converter.convert(fb)
+		return fb
 
 # ---- Encoder: ffmpeg
 #
@@ -452,7 +458,7 @@ ENCODERS = (
 )
 
 class Encoder:
-	def __init__(self, screen, fps, bitrate, wanted):
+	def __init__(self, size, fps, bitrate, wanted):
 		candidates = [c for c in ENCODERS if not wanted or c[0] == wanted]
 		if not candidates:
 			raise SystemExit("unknown encoder " + wanted)
@@ -460,9 +466,8 @@ class Encoder:
 		# From here on the only child is ffmpeg, and its exit ends the session.
 		# Installed after the probes, which spawn children of their own.
 		signal.signal(signal.SIGCHLD, lambda *_: os._exit(0))
-		size = "%dx%d" % (screen.width, screen.height)
-		source = ["-f", "rawvideo", "-pix_fmt", "nv12",
-				  "-framerate", fps, "-video_size", size, "-i", "-"]
+		source = ["-f", "rawvideo", "-pix_fmt", "nv12", "-framerate", fps,
+				  "-video_size", "%dx%d" % size, "-i", "-"]
 		self.process = subprocess.Popen(
 				self._command(source, name, options, bitrate),
 				stdin=subprocess.PIPE)
@@ -510,32 +515,16 @@ class Encoder:
 
 # ---- Main
 
-def stream_frames(screen, encoder, fps):
-	# Convert and push frames at a steady pace. When a frame takes longer than
-	# its slot, restart the clock instead of trying to catch up.
-	interval = 1.0 / float(fps)
-	upcoming = time.monotonic()
-	while view := screen.frame():
-		if not encoder.write(view):
-			break
-		upcoming += interval
-		delay = upcoming - time.monotonic()
-		if delay > 0:
-			time.sleep(delay)
-		else:
-			upcoming = time.monotonic()
-
 def replay_input(uinput, encoder):
 	# Runs on its own thread. EOF on stdin means the client hung up: closing
-	# the pipe to ffmpeg makes stream_frames stop on its next write, which
+	# the pipe to ffmpeg makes the capture loop stop on its next write, which
 	# ends the session.
 	try:
 		while True:
 			typ, code, value = struct.unpack(FMT_WIRE, read_exactly(WIRE_SIZE))
 			uinput.inject(typ, code, value)
 	except EOFError:
-		pass
-	encoder.close()
+		encoder.close()
 
 # scrssh ignores everything on stdout before this line, such as login
 # banners.
@@ -546,18 +535,32 @@ subprocess.run(["modprobe", "uinput"],
 			   env={"PATH": "/sbin:/usr/sbin:/bin:/usr/bin"},
 			   stdout=subprocess.DEVNULL)
 config = read_exactly(struct.unpack("!H", read_exactly(2))[0]).decode()
-device, crtc, plane, fps, bitrate, wanted, _ = config.split("\0")
-uinput = Uinput()
-# AttributeError covers EGL libraries too old for the entry points used
-# here. SystemExit prints the bare message, which is what the README
-# lists under Troubleshooting.
+device, crtc, plane, fps, bitrate, wanted, limit, _ = config.split("\0")
 try:
-	screen = Screen(device, crtc, plane)
-	encoder = Encoder(screen, fps, bitrate, wanted)
+	uinput = Uinput()
+	drm = Drm(device)
+	screen = Screen(drm, crtc, plane)
+	converter = Converter(drm, screen.source, limit)
+	# Convert one frame right away, so a driver that cannot import the buffer
+	# fails here rather than after ffmpeg has started.
+	converter.convert(screen.frame())
+	encoder = Encoder(converter.size, fps, bitrate, wanted)
 	os.close(1)
 	threading.Thread(target=replay_input, args=(uinput, encoder), daemon=True).start()
-	stream_frames(screen, encoder, fps)
-except (OSError, AttributeError) as error:
+	# Convert and push frames at a steady pace. When a frame takes longer than
+	# its slot, restart the clock instead of trying to catch up.
+	interval = 1.0 / float(fps)
+	upcoming = time.monotonic()
+	while fb := screen.frame():
+		if not encoder.write(converter.convert(fb)):
+			break
+		upcoming += interval
+		delay = upcoming - time.monotonic()
+		if delay > 0:
+			time.sleep(delay)
+		else:
+			upcoming = time.monotonic()
+except (OSError, AttributeError, ValueError) as error:
 	raise SystemExit(error)
 encoder.close()
 encoder.wait()

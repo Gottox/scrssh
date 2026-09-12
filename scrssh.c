@@ -27,6 +27,7 @@ enum RemoteConfig {
 	REMOTE_CONFIG_FPS,
 	REMOTE_CONFIG_BITRATE,
 	REMOTE_CONFIG_ENCODER,
+	REMOTE_CONFIG_LIMIT,
 	REMOTE_CONFIG_COUNT,
 };
 
@@ -466,10 +467,6 @@ static const char *
 run_ui(void) {
 	const char *error = NULL;
 
-	if (!SDL_Init(SDL_INIT_VIDEO)) {
-		die("could not initialise SDL: %s", SDL_GetError());
-	}
-
 	app.frames[0] = av_frame_alloc();
 	app.frames[1] = av_frame_alloc();
 	app.locks[0] = SDL_CreateMutex();
@@ -615,6 +612,8 @@ usage(void) {
 		"  -e <NAME>  force an encoder           [default: ask the host]\n"
 		"             h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264\n"
 		"  -f <N>     capture frame rate         [default: 30]\n"
+		"  -m <RES>   cap the capture at <W>x<H> [default: this display]\n"
+		"             either side may be left out, 0 caps nothing\n"
 		"  -s         run the agent under `sudo -S`\n"
 		"  -u         run the agent under `su -T`\n"
 		"  -h         show this help");
@@ -622,9 +621,11 @@ usage(void) {
 
 int
 main(int argc, char **argv) {
-	const char *remote_config[] = {"/dev/dri/card0", "", "", "30", "10M", ""};
+	char display_limit[24] = "";
+	const char *remote_config[] = {
+			"/dev/dri/card0", "", "", "30", "10M", "", NULL};
 
-	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:FB:e:suh")) != -1;) {
+	for (int o; (o = getopt(argc, argv, "+ad:C:P:f:FB:e:m:suh")) != -1;) {
 		switch (o) {
 #define REMOTE_CFG(c, v) \
 	case c: \
@@ -636,7 +637,8 @@ main(int argc, char **argv) {
 			REMOTE_CFG('f', REMOTE_CONFIG_FPS)
 			REMOTE_CFG('B', REMOTE_CONFIG_BITRATE)
 			REMOTE_CFG('e', REMOTE_CONFIG_ENCODER)
-#undef CFG
+			REMOTE_CFG('m', REMOTE_CONFIG_LIMIT)
+#undef REMOTE_CFG
 		case '?':
 			usage();
 			break;
@@ -654,6 +656,22 @@ main(int argc, char **argv) {
 
 	ssh_spawn(argv + optind, argc - optind);
 	set_title(argv + optind, argc - optind);
+
+	if (!SDL_Init(SDL_INIT_VIDEO)) {
+		die("could not initialise SDL: %s", SDL_GetError());
+	}
+	if (remote_config[REMOTE_CONFIG_LIMIT] == NULL) {
+		const SDL_DisplayMode *mode =
+				SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
+		if (!mode) {
+			die("could not get display resolution: %s", SDL_GetError());
+		}
+		float density = mode->pixel_density > 0.0f ? mode->pixel_density : 1.0f;
+		snprintf(
+				display_limit, sizeof(display_limit), "%ldx%ld",
+				SDL_lroundf(mode->w * density), SDL_lroundf(mode->h * density));
+		remote_config[REMOTE_CONFIG_LIMIT] = display_limit;
+	}
 
 	greeting(MARKER("login"), -1);
 	echo_off();

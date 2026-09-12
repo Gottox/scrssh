@@ -24,6 +24,8 @@ options:
   -e <NAME>  force an encoder           [default: ask the host]
              h264_vaapi, h264_nvenc, h264_v4l2m2m, libx264
   -f <N>     capture frame rate         [default: 30]
+  -m <RES>   cap the capture at <W>x<H> [default: this display]
+             either side may be left out, 0 caps nothing
   -s         run the agent under `sudo -S`
   -u         run the agent under `su -T`
   -h         show this help
