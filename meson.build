@@ -4,7 +4,7 @@
 project(
     'scrssh',
     'c',
-    version: '0.2.0',
+    version: '0.3.0',
     license: 'GPL-2.0-only',
     default_options: [
         'c_std=c11',
