@@ -23,7 +23,6 @@ if pyminify.found()
         output: 'agent.min.py',
         command: [
             pyminify,
-            '--prefer-single-line',
             '--rename-globals', '@INPUT@',
             '-o', '@OUTPUT@',
         ],
