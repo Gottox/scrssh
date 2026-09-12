@@ -219,7 +219,6 @@ precision highp float;
 
 uniform sampler2D screen;
 uniform vec2 size;
-uniform float chroma;
 
 vec3 pixel(float x, float y) {
 	return texture2D(screen, vec2(x, y) / size).rgb;
@@ -238,8 +237,8 @@ vec2 chroma_pair(float x, float y) {
 
 void main() {
 	float x = gl_FragCoord.x * 4.0;
-	if (chroma > 0.5) {
-		float y = gl_FragCoord.y * 2.0;
+	if (gl_FragCoord.y > size.y) {
+		float y = (gl_FragCoord.y - size.y) * 2.0;
 		gl_FragColor = vec4(chroma_pair(x - 1.0, y), chroma_pair(x + 1.0, y));
 	} else {
 		float y = gl_FragCoord.y;
@@ -255,13 +254,9 @@ class Converter:
 		self._load_libraries()
 		self._open_context()
 		self._build_program(width, height)
-		luma_size = width * height
-		self.passes = (
-			self._make_pass(width // 4, height, 0, 0.0),
-			self._make_pass(width // 4, height // 2, luma_size, 1.0),
-		)
+		self._make_target(width // 4, height * 3 // 2)
 		# One NV12 frame: the Y plane followed by the interleaved UV plane.
-		self.pixels = (ctypes.c_char * (luma_size * 3 // 2))()
+		self.pixels = (ctypes.c_char * (width * height * 3 // 2))()
 		self.view = memoryview(self.pixels)
 
 	def _load_libraries(self):
@@ -333,11 +328,9 @@ class Converter:
 		self.gl.glUniform1i(self.gl.glGetUniformLocation(program, b"screen"), 0)
 		self.gl.glUniform2f(self.gl.glGetUniformLocation(program, b"size"),
 							width, height)
-		self.chroma = self.gl.glGetUniformLocation(program, b"chroma")
-		self.program = program
 
-	def _make_pass(self, width, height, offset, chroma):
-		# Returns the render target plus where its bytes go in the frame.
+	def _make_target(self, width, height):
+		# Bound and sized once: nothing else ever draws or changes the viewport.
 		target, fbo = ctypes.c_uint(), ctypes.c_uint()
 		self.gl.glGenTextures(1, ctypes.byref(target))
 		self.gl.glBindTexture(GL_TEXTURE_2D, target)
@@ -349,7 +342,8 @@ class Converter:
 									   GL_TEXTURE_2D, target, 0)
 		if self.gl.glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
 			raise OSError("no render target for the EGL conversion")
-		return fbo, width, height, offset, chroma
+		self.gl.glViewport(0, 0, width, height)
+		self.target = width, height
 
 	def _import_texture(self, fb):
 		_, width, height, fourcc, flags, handles, pitches, offsets, modifiers = fb
@@ -387,28 +381,23 @@ class Converter:
 	def convert(self, fb):
 		# The returned view is overwritten by the next call.
 		image, texture = self._import_texture(fb)
-		self.gl.glUseProgram(self.program)
 		self.gl.glBindTexture(GL_TEXTURE_2D, texture)
-		for fbo, width, height, offset, chroma in self.passes:
-			self.gl.glBindFramebuffer(GL_FRAMEBUFFER, fbo)
-			self.gl.glViewport(0, 0, width, height)
-			self.gl.glUniform1f(self.chroma, chroma)
-			self.gl.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
-			self.gl.glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE,
-								 ctypes.byref(self.pixels, offset))
+		self.gl.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
+		self.gl.glReadPixels(0, 0, *self.target, GL_RGBA, GL_UNSIGNED_BYTE,
+							 ctypes.byref(self.pixels))
 		self.gl.glDeleteTextures(1, ctypes.byref(texture))
 		self.destroy_image(self.display, image)
 		return self.view
 
 # ---- Screen
 #
-# Ties Drm and Converter together: pick the plane once, then convert whatever
-# buffer the compositor has flipped onto it.
+# The scanout plane: pick it once, then hand out whatever buffer the
+# compositor has flipped onto it.
 
 class Screen:
-	def __init__(self, device, crtc, plane):
-		self.drm = Drm(device)
-		self.plane_id = self.drm.scanout_plane(crtc, plane)
+	def __init__(self, drm, crtc, plane):
+		self.drm = drm
+		self.plane_id = drm.scanout_plane(crtc, plane)
 		fb = self._current_framebuffer()
 		if not fb:
 			raise OSError("no framebuffer on the capture plane")
