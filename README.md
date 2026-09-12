@@ -137,25 +137,25 @@ The host has no EGL. Install the GPU driver packages that provide `libEGL`,
 `libGLESv2` and `libgbm`; on Debian those are `libegl1`, `libgles2` and
 `libgbm1`.
 
-## License
-
-*scrssh* is released under the GNU General Public License, version 2. See
-[LICENSE](./LICENSE) for the full text.
-
 ## Screenshots
 
 Debian Gnome:
 
-![Gnome](./img/gnome.png)
+![Gnome](./img/gnome.jpg)
 
 Debian KDE Plasma:
 
-![Gnome](./img/kde.png)
+![Gnome](./img/kde.jpg)
 
 Works on Bazzite:
 
-![Bazzite](./img/bazzite.png)
+![Bazzite](./img/bazzite.jpg)
 
 Works even on the Raspberry Pi 2:
 
-![Raspberry Pi 2](./img/rpi2.png)
+![Raspberry Pi 2](./img/rpi2.jpg)
+
+## License
+
+*scrssh* is released under the GNU General Public License, version 2. See
+[LICENSE](./LICENSE) for the full text.
