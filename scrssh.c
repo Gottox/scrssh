@@ -432,8 +432,8 @@ create_window(int width, int height) {
 	SDL_SetTextureScaleMode(app.texture, SDL_SCALEMODE_LINEAR);
 	SDL_SetRenderLogicalPresentation(
 			app.renderer, width, height, SDL_LOGICAL_PRESENTATION_LETTERBOX);
-	SDL_SetWindowAspectRatio(
-			app.window, (float)width / height, (float)width / height);
+	float aspect = (float)width / height;
+	SDL_SetWindowAspectRatio(app.window, aspect, aspect);
 }
 
 static void
@@ -575,9 +575,8 @@ out:
 	SDL_DestroyMutex(app.locks[1]);
 	SDL_DestroyTexture(app.texture);
 	if (app.renderer) {
-		SDL_Window *window = SDL_GetRenderWindow(app.renderer);
 		SDL_DestroyRenderer(app.renderer);
-		SDL_DestroyWindow(window);
+		SDL_DestroyWindow(app.window);
 	}
 	SDL_Quit();
 

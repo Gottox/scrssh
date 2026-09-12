@@ -285,7 +285,6 @@ class Converter:
 		self.egl.eglGetPlatformDisplay.restype = ctypes.c_void_p
 		self.egl.eglCreateContext.restype = ctypes.c_void_p
 		self.gl.glUniform2f.argtypes = [ctypes.c_int, ctypes.c_float, ctypes.c_float]
-		self.gl.glUniform1f.argtypes = [ctypes.c_int, ctypes.c_float]
 		# The dma-buf import is an extension, reachable only by address.
 		self.create_image = self._extension(
 				b"eglCreateImageKHR", ctypes.c_void_p, ctypes.c_void_p,
