@@ -32,8 +32,7 @@ def read_exactly(size):
 
 # ---- ioctl request numbers
 #
-# Python has no <sys/ioctl.h>, so the _IOC() macro is rebuilt here. Alpha,
-# MIPS, PowerPC and SPARC lay the direction bits out differently.
+# sys/ioctl.h
 
 IOC_ALT = os.uname().machine[:3] in ("ppc", "mip", "spa", "alp")
 IOC_NONE, IOC_WRITE = (1, 4) if IOC_ALT else (0, 1)
@@ -45,7 +44,8 @@ def ioc(direction, nr, size, kind="U"):
 
 # ---- Input replay: uinput
 #
-# Numbers from <linux/input-event-codes.h> and <linux/uinput.h>.
+# linux/input-event-codes.h
+# linux/uinput.h
 
 EV_SYN, EV_KEY, EV_REL, EV_ABS = 0x00, 0x01, 0x02, 0x03
 ABS_X, ABS_Y = 0x00, 0x01
@@ -91,14 +91,12 @@ class Uinput:
 		fcntl.ioctl(self.fd, request, arg)
 
 	def inject(self, typ, code, value):
-		# The kernel stamps the event itself, so both time fields stay zero.
 		os.write(self.fd, struct.pack(FMT_INPUT_EVENT, 0, 0, typ, code, value))
 
 # ---- Screen source: DRM
 #
-# Numbers and struct layouts from <drm/drm.h> and <drm/drm_mode.h>. Just the
-# ioctls needed to find the plane that is on screen and to hand its buffer to
-# EGL are wrapped here.
+# drm/drm.h
+# drm/drm_mode.h
 
 DRM_CLIENT_CAP_UNIVERSAL_PLANES, DRM_CLIENT_CAP_ATOMIC = 2, 3
 DRM_OBJECT_PLANE = 0xEEEEEEEE
@@ -123,17 +121,12 @@ DRM_GET_OBJ_PROPS = ioc(IOC_READ | IOC_WRITE, 0xB9,
 						struct.calcsize(FMT_OBJ_PROPS), "d")
 DRM_GET_FB2 = ioc(IOC_READ | IOC_WRITE, 0xCE, struct.calcsize(FMT_FB2), "d")
 
-# What framebuffer() returns, in order: id, width, height, fourcc and flags
-# from struct drm_mode_fb_cmd2, then its handles, pitches, offsets and
-# modifiers, one entry per colour plane. Unused planes have a handle of 0.
 FB_WIDTH, FB_HEIGHT, FB_HANDLES = 1, 2, 5
 
 class Drm:
 	def __init__(self, device):
 		self.device = device
 		self.fd = os.open(device, os.O_RDWR)
-		# Without these the kernel hides the primary planes. Kernels too old to
-		# know them reject the request, which is fine.
 		for capability in (DRM_CLIENT_CAP_UNIVERSAL_PLANES, DRM_CLIENT_CAP_ATOMIC):
 			try:
 				fcntl.ioctl(self.fd, DRM_SET_CLIENT_CAP,
@@ -158,8 +151,6 @@ class Drm:
 		return self._ioctl(DRM_GET_PLANE, FMT_PLANE, plane_id, 0, 0, 0, 0, 0, 0)[:3]
 
 	def _properties(self, plane_id):
-		# Ids and values come back in two parallel arrays, and every id needs
-		# one more ioctl to learn its name.
 		count = self._ioctl(DRM_GET_OBJ_PROPS, FMT_OBJ_PROPS,
 						   0, 0, 0, plane_id, DRM_OBJECT_PLANE)[2]
 		ids = array("I", [0]) * count
@@ -177,20 +168,15 @@ class Drm:
 		return f[:5] + (f[5:9], f[9:13], f[13:17], f[17:21])
 
 	def export(self, handle):
-		# Turn a GEM handle into a dma-buf file descriptor that EGL can import.
 		return self._ioctl(DRM_PRIME_TO_FD, FMT_PRIME, handle, 0, 0)[2]
 
 	def scanout_plane(self, crtc, requested):
-		# -P names the plane outright. Otherwise take the first primary plane
-		# that has a framebuffer attached, on the CRTC from -C if one was given.
 		if requested:
 			return int(requested)
 		for plane_id in self._plane_ids():
 			_, crtc_id, fb_id = self.plane(plane_id)
 			if crtc and crtc_id != int(crtc):
 				continue
-			# Drivers without universal planes report no type property at all;
-			# those planes are all primary.
 			kind = self._properties(plane_id).get("type")
 			if fb_id and kind in (DRM_PLANE_PRIMARY, None):
 				return plane_id
@@ -198,16 +184,14 @@ class Drm:
 
 # ---- Pixel conversion: EGL and GLES
 #
-# Numbers from <EGL/egl.h>, <EGL/eglext.h> and <GLES2/gl2.h>. The scanout
-# buffer is imported as a dma-buf into an EGL image, sampled by a fragment
-# shader and read back as NV12. Letting the GPU do the sampling means tiled
-# and compressed framebuffers come out linear without any CPU work.
+# EGL/egl.h
+# EGL/eglext.h
+# GLES2/gl2.h
 
 EGL_PLATFORM_GBM = 0x31D7
 EGL_LINUX_DMA_BUF = 0x3270
 EGL_HEIGHT, EGL_WIDTH, EGL_FOURCC = 0x3056, 0x3057, 0x3271
 EGL_CONTEXT_VERSION, EGL_ES_API, EGL_NONE = 0x3098, 0x30A0, 0x3038
-# EGL_DMA_BUF_PLANEn_{FD,OFFSET,PITCH,MODIFIER_LO,MODIFIER_HI}_EXT for n = 0..3
 EGL_PLANES = (
 	(0x3272, 0x3273, 0x3274, 0x3443, 0x3444),
 	(0x3275, 0x3276, 0x3277, 0x3445, 0x3446),
@@ -230,17 +214,6 @@ void main() {
 }
 """
 
-# The fragment shader writes NV12 directly into RGBA render targets, so that
-# glReadPixels hands back the two planes byte for byte:
-#
-#   luma pass    width/4 x height    one texel = Y of 4 neighbouring pixels
-#   chroma pass  width/4 x height/2  one texel = U,V of 2 neighbouring 2x2 blocks
-#
-# gl_FragCoord is the texel centre (n + 0.5), hence x = 4n + 2 and the luma
-# samples at x - 1.5 .. x + 1.5 hit the centres of pixels 4n .. 4n + 3. The
-# chroma samples sit on the corner shared by the four pixels of a 2x2 block,
-# so GL_LINEAR filtering averages the block for free. The constants are the
-# BT.601 limited range matrix.
 FRAGMENT = b"""
 precision highp float;
 
