@@ -422,7 +422,17 @@ create_window(int width, int height) {
 				&app.renderer)) {
 		die("could not create the window: %s", SDL_GetError());
 	}
+}
 
+static void
+set_video_size(int width, int height) {
+	float w = 0, h = 0;
+	if (app.texture && SDL_GetTextureSize(app.texture, &w, &h) &&
+		(int)w == width && (int)h == height) {
+		return;
+	}
+
+	SDL_DestroyTexture(app.texture);
 	app.texture = SDL_CreateTexture(
 			app.renderer, SDL_PIXELFORMAT_IYUV, SDL_TEXTUREACCESS_STREAMING,
 			width, height);
@@ -555,6 +565,7 @@ run_ui(void) {
 			if (!app.renderer) {
 				create_window(frame->width, frame->height);
 			}
+			set_video_size(frame->width, frame->height);
 			SDL_UpdateYUVTexture(
 					app.texture, NULL, frame->data[0], frame->linesize[0],
 					frame->data[1], frame->linesize[1], frame->data[2],

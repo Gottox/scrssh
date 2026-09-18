@@ -5,7 +5,6 @@ from array import array
 import ctypes
 import fcntl
 import os
-import signal
 import struct
 import subprocess
 import threading
@@ -81,8 +80,6 @@ class Uinput:
 			self._ioctl(UI_SET_ABSBIT, axis)
 			self._ioctl(UI_ABS_SETUP, struct.pack(
 					FMT_ABS_SETUP, axis, 0, 0, ABS_RANGE_MAX, 0, 0, 0))
-		# 0x1D6B is the vendor id of the Linux Foundation, as used by other
-		# virtual devices in the kernel.
 		self._ioctl(UI_DEV_SETUP, struct.pack(
 				FMT_INPUT_ID_SETUP, BUS_VIRTUAL, 0x1D6B, 1, 1, b"scrssh", 0))
 		self._ioctl(UI_DEV_CREATE)
@@ -139,7 +136,6 @@ class Drm:
 		return struct.unpack(fmt, result)
 
 	def _plane_ids(self):
-		# Ask for the count first, then again with a buffer of that size.
 		count = self._ioctl(DRM_GET_PLANE_RES, FMT_PLANE_RES, 0, 0)[1]
 		ids = array("I", [0]) * count
 		if ids:
@@ -147,7 +143,6 @@ class Drm:
 		return ids
 
 	def plane(self, plane_id):
-		# id, crtc_id, fb_id.
 		return self._ioctl(DRM_GET_PLANE, FMT_PLANE, plane_id, 0, 0, 0, 0, 0, 0)[:3]
 
 	def _properties(self, plane_id):
@@ -259,24 +254,29 @@ def fit(w, h, limit):
 		return w * max_h // h, max_h
 
 class Converter:
-	def __init__(self, drm, source, limit):
+	def __init__(self, drm, limit):
 		self.drm = drm
-		w, h = fit(*source, limit)
-		# NV12 needs even dimensions and the luma pass packs 4 pixels per
-		# texel, so trim to multiples of 4 by 2. At most 3 columns and 1 row
-		# are lost.
-		self.size = w, h = max(w // 4 * 4, 4), max(h // 2 * 2, 2)
+		self.limit = limit
+		self.source = None
 		self._load_libraries()
 		self._open_context()
-		self._build_program(w, h)
-		self._make_target(w // 4, h * 3 // 2)
-		# One NV12 frame: the Y plane followed by the interleaved UV plane.
+		self._build_program()
+		self._make_target()
+
+	def maybe_resize(self, fb):
+		source = fb[FB_WIDTH], fb[FB_HEIGHT]
+		if source == self.source:
+			return False
+		self.source = source
+		w, h = fit(*source, self.limit)
+		self.size = w, h = max(w // 4 * 4, 4), max(h // 2 * 2, 2)
+		self.gl.glUniform2f(self.size_uniform, w, h)
+		self._size_target(w // 4, h * 3 // 2)
 		self.pixels = (ctypes.c_char * (w * h * 3 // 2))()
 		self.view = memoryview(self.pixels)
+		return True
 
 	def _load_libraries(self):
-		# ctypes assumes every function returns an int. Pointers need their
-		# real type declared or they are truncated to 32 bits.
 		self.egl = ctypes.CDLL("libEGL.so.1")
 		self.gl = ctypes.CDLL("libGLESv2.so.2")
 		self.gbm = ctypes.CDLL("libgbm.so.1")
@@ -285,7 +285,6 @@ class Converter:
 		self.egl.eglGetPlatformDisplay.restype = ctypes.c_void_p
 		self.egl.eglCreateContext.restype = ctypes.c_void_p
 		self.gl.glUniform2f.argtypes = [ctypes.c_int, ctypes.c_float, ctypes.c_float]
-		# The dma-buf import is an extension, reachable only by address.
 		self.create_image = self._extension(
 				b"eglCreateImageKHR", ctypes.c_void_p, ctypes.c_void_p,
 				ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p,
@@ -302,8 +301,6 @@ class Converter:
 		return ctypes.CFUNCTYPE(*signature)(address)
 
 	def _open_context(self):
-		# A GBM device on the DRM fd gives EGL a display without any window
-		# system, and a surfaceless context is enough to render into textures.
 		gbm_device = ctypes.c_void_p(self.gbm.gbm_create_device(self.drm.fd))
 		self.display = ctypes.c_void_p(self.egl.eglGetPlatformDisplay(
 				EGL_PLATFORM_GBM, gbm_device, None))
@@ -317,7 +314,6 @@ class Converter:
 		if not self.context.value or not self.egl.eglMakeCurrent(
 				self.display, None, None, self.context):
 			raise OSError("no EGL context for " + self.drm.device)
-		# Kept on self because GL stores only the pointer to the quad.
 		self.quad = (ctypes.c_float * 8)(-1, -1, 1, -1, -1, 1, 1, 1)
 		self.gl.glEnableVertexAttribArray(0)
 		self.gl.glVertexAttribPointer(0, 2, GL_FLOAT, 0, 0, self.quad)
@@ -328,7 +324,7 @@ class Converter:
 		self.gl.glCompileShader(shader)
 		self.gl.glAttachShader(program, shader)
 
-	def _build_program(self, width, height):
+	def _build_program(self):
 		program = self.gl.glCreateProgram()
 		self._shader(program, GL_VERTEX_SHADER, VERTEX)
 		self._shader(program, GL_FRAGMENT_SHADER, FRAGMENT)
@@ -340,20 +336,21 @@ class Converter:
 			raise OSError("cannot build the EGL conversion shader")
 		self.gl.glUseProgram(program)
 		self.gl.glUniform1i(self.gl.glGetUniformLocation(program, b"screen"), 0)
-		self.gl.glUniform2f(self.gl.glGetUniformLocation(program, b"size"),
-							width, height)
+		self.size_uniform = self.gl.glGetUniformLocation(program, b"size")
 
-	def _make_target(self, width, height):
-		# Bound and sized once: nothing else ever draws or changes the viewport.
-		target, fbo = ctypes.c_uint(), ctypes.c_uint()
-		self.gl.glGenTextures(1, ctypes.byref(target))
-		self.gl.glBindTexture(GL_TEXTURE_2D, target)
-		self.gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
-							 GL_RGBA, GL_UNSIGNED_BYTE, None)
+	def _make_target(self):
+		self.canvas, fbo = ctypes.c_uint(), ctypes.c_uint()
+		self.gl.glGenTextures(1, ctypes.byref(self.canvas))
+		self.gl.glBindTexture(GL_TEXTURE_2D, self.canvas)
 		self.gl.glGenFramebuffers(1, ctypes.byref(fbo))
 		self.gl.glBindFramebuffer(GL_FRAMEBUFFER, fbo)
 		self.gl.glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-									   GL_TEXTURE_2D, target, 0)
+									   GL_TEXTURE_2D, self.canvas, 0)
+
+	def _size_target(self, width, height):
+		self.gl.glBindTexture(GL_TEXTURE_2D, self.canvas)
+		self.gl.glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+							 GL_RGBA, GL_UNSIGNED_BYTE, None)
 		if self.gl.glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE:
 			raise OSError("no render target for the EGL conversion")
 		self.gl.glViewport(0, 0, width, height)
@@ -376,7 +373,6 @@ class Converter:
 		attributes.append(EGL_NONE)
 		image = self.create_image(self.display, None, EGL_LINUX_DMA_BUF, None,
 								  (ctypes.c_uint32 * len(attributes))(*attributes))
-		# EGL holds its own references from here on.
 		for exported in fds:
 			os.close(exported)
 		if not image:
@@ -385,7 +381,6 @@ class Converter:
 		self.gl.glGenTextures(1, ctypes.byref(texture))
 		self.gl.glBindTexture(GL_TEXTURE_2D, texture)
 		self.image_target(GL_TEXTURE_2D, image)
-		# GL_LINEAR matters: the chroma pass relies on it to average 2x2 blocks.
 		self.gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
 		self.gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
 		self.gl.glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
@@ -393,7 +388,6 @@ class Converter:
 		return image, texture
 
 	def convert(self, fb):
-		# The returned view is overwritten by the next call.
 		image, texture = self._import_texture(fb)
 		self.gl.glBindTexture(GL_TEXTURE_2D, texture)
 		self.gl.glDrawArrays(GL_TRIANGLE_STRIP, 0, 4)
@@ -408,31 +402,36 @@ class Converter:
 # The scanout plane: pick it once, then hand out whatever buffer the
 # compositor has flipped onto it.
 
+# Hardware encoders refuse anything smaller, and compositors park such
+# buffers on the plane while starting up.
+MIN_DIMENSION = 128
+
 class Screen:
 	def __init__(self, drm, crtc, plane):
 		self.drm = drm
 		self.plane_id = drm.scanout_plane(crtc, plane)
-		fb = self._current_framebuffer()
+		fb = self.frame()
 		if not fb:
 			raise OSError("no framebuffer on the capture plane")
-		# GETFB2 fills in the buffer handles only for CAP_SYS_ADMIN; everyone
-		# else gets zeros and cannot export the buffer.
 		if not fb[FB_HANDLES][0]:
 			raise OSError("the framebuffer is not accessible; capturing needs root")
-		# The mode the session started with. frame() stops when it changes.
-		self.source = fb[FB_WIDTH], fb[FB_HEIGHT]
 
 	def _current_framebuffer(self):
-		_, _, fb_id = self.drm.plane(self.plane_id)
-		return self.drm.framebuffer(fb_id) if fb_id else None
+		try:
+			_, _, fb_id = self.drm.plane(self.plane_id)
+			fb = self.drm.framebuffer(fb_id) if fb_id else None
+		except OSError:
+			return None
+		if fb and min(fb[FB_WIDTH], fb[FB_HEIGHT]) < MIN_DIMENSION:
+			return None
+		return fb
 
 	def frame(self):
-		# None ends the stream. A resolution change would need new render
-		# targets and a new ffmpeg, so the client reports the stream ended
-		# instead.
-		fb = self._current_framebuffer()
-		if not fb or (fb[FB_WIDTH], fb[FB_HEIGHT]) != self.source:
-			return None
+		deadline = time.monotonic() + 0.5
+		while not (fb := self._current_framebuffer()):
+			if time.monotonic() >= deadline:
+				return None
+			time.sleep(0.5)
 		return fb
 
 # ---- Encoder: ffmpeg
@@ -457,73 +456,66 @@ ENCODERS = (
 )
 
 class Encoder:
-	def __init__(self, size, fps, bitrate, wanted):
+	def __init__(self, fps, bitrate, wanted):
 		candidates = [c for c in ENCODERS if not wanted or c[0] == wanted]
 		if not candidates:
 			raise SystemExit("unknown encoder " + wanted)
-		name, options = self._probe(candidates, bitrate)
-		# From here on the only child is ffmpeg, and its exit ends the session.
-		# Installed after the probes, which spawn children of their own.
-		signal.signal(signal.SIGCHLD, lambda *_: os._exit(0))
-		source = ["-f", "rawvideo", "-pix_fmt", "nv12", "-framerate", fps,
+		self.fps, self.bitrate = fps, bitrate
+		self.name, self.options = self._probe(candidates)
+		self.process = None
+
+	def restart(self, size):
+		self.stop()
+		source = ["-f", "rawvideo", "-pix_fmt", "nv12", "-framerate", self.fps,
 				  "-video_size", "%dx%d" % size, "-i", "-"]
 		self.process = subprocess.Popen(
-				self._command(source, name, options, bitrate),
+				self._command(source, self.name, self.options),
 				stdin=subprocess.PIPE)
 
-	def _command(self, source, encoder, options, bitrate):
-		# No B-frames and no muxer buffering, so a packet leaves as soon as it
-		# is encoded.
+	def stop(self):
+		if not self.process:
+			return
+		self.process.stdin.close()
+		try:
+			self.process.wait(2)
+		except subprocess.TimeoutExpired:
+			self.process.kill()
+		self.process = None
+
+	def _command(self, source, encoder, options):
 		return (
 			FFMPEG + source + ["-c:v", encoder] + options
-			+ ["-b:v", bitrate, "-maxrate", bitrate, "-g", "60", "-bf", "0"]
+			+ ["-b:v", self.bitrate, "-maxrate", self.bitrate, "-g", "60",
+			   "-bf", "0"]
 			+ ["-f", "mpegts", "-flush_packets", "1", "-muxdelay", "0",
 			   "-muxpreload", "0", "pipe:1"]
 		)
 
-	def _probe(self, candidates, bitrate):
-		# Encode one synthetic frame with each candidate and keep the first that
-		# produces output. The last one is never probed: it is either the software
-		# fallback or the single encoder forced with -e, which is used regardless.
+	def _probe(self, candidates):
 		for name, options in candidates[:-1]:
-			if subprocess.run(self._command(PROBE, name, options, bitrate),
+			if subprocess.run(self._command(PROBE, name, options),
 							  stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
 							  stderr=subprocess.DEVNULL).stdout:
 				return name, options
 		return candidates[-1]
 
 	def write(self, view):
-		# False once ffmpeg is gone or replay_input closed the pipe.
 		try:
-			# A buffered stdin retries the short write a signal can cause.
 			self.process.stdin.write(view)
 			self.process.stdin.flush()
-		except (OSError, ValueError):
+		except OSError:
 			return False
 		return True
 
-	def close(self):
-		# Also how replay_input ends a session: the next write returns False.
-		self.process.stdin.close()
-
-	def wait(self):
-		try:
-			self.process.wait(2)
-		except subprocess.TimeoutExpired:
-			self.process.kill()
-
 # ---- Main
 
-def replay_input(uinput, encoder):
-	# Runs on its own thread. EOF on stdin means the client hung up: closing
-	# the pipe to ffmpeg makes the capture loop stop on its next write, which
-	# ends the session.
+def replay_input(uinput):
 	try:
 		while True:
 			typ, code, value = struct.unpack(FMT_WIRE, read_exactly(WIRE_SIZE))
 			uinput.inject(typ, code, value)
 	except EOFError:
-		encoder.close()
+		os._exit(0)
 
 # scrssh ignores everything on stdout before this line, such as login
 # banners.
@@ -539,18 +531,18 @@ try:
 	uinput = Uinput()
 	drm = Drm(device)
 	screen = Screen(drm, crtc, plane)
-	converter = Converter(drm, screen.source, limit)
-	# Convert one frame right away, so a driver that cannot import the buffer
-	# fails here rather than after ffmpeg has started.
-	converter.convert(screen.frame())
-	encoder = Encoder(converter.size, fps, bitrate, wanted)
-	os.close(1)
-	threading.Thread(target=replay_input, args=(uinput, encoder), daemon=True).start()
-	# Convert and push frames at a steady pace. When a frame takes longer than
-	# its slot, restart the clock instead of trying to catch up.
+	converter = Converter(drm, limit)
+	fb = screen.frame()
+	converter.maybe_resize(fb)
+	converter.convert(fb)
+	encoder = Encoder(fps, bitrate, wanted)
+	encoder.restart(converter.size)
+	threading.Thread(target=replay_input, args=(uinput,), daemon=True).start()
 	interval = 1.0 / float(fps)
 	upcoming = time.monotonic()
 	while fb := screen.frame():
+		if converter.maybe_resize(fb):
+			encoder.restart(converter.size)
 		if not encoder.write(converter.convert(fb)):
 			break
 		upcoming += interval
@@ -561,5 +553,4 @@ try:
 			upcoming = time.monotonic()
 except (OSError, AttributeError, ValueError) as error:
 	raise SystemExit(error)
-encoder.close()
-encoder.wait()
+encoder.stop()
