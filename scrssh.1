@@ -1,0 +1,268 @@
+.\" SPDX-License-Identifier: GPL-2.0-only
+.\" Copyright (C) 2026 Enno Boland <g@s01.de>
+.Dd October 8, 2026
+.Dt SCRSSH 1
+.Os
+.Sh NAME
+.Nm scrssh
+.Nd view and control a remote Linux desktop over SSH
+.Sh SYNOPSIS
+.Nm
+.Op Fl aFhsu
+.Op Fl B Ar rate
+.Op Fl C Ar crtc
+.Op Fl d Ar device
+.Op Fl e Ar encoder
+.Op Fl f Ar fps
+.Op Fl m Ar WxH
+.Op Fl P Ar plane
+.Op Fl -
+.Ar ssh-arguments ...
+.Sh DESCRIPTION
+.Nm
+shows the screen of a remote Linux host in a local window and forwards
+keyboard and mouse input to it.
+Nothing is installed on the remote host and no daemon is left behind:
+.Nm
+pipes a Python agent over an
+.Xr ssh 1
+connection, the agent captures the screen and streams it back as H.264,
+and it exits together with the session.
+.Pp
+Everything after the options is handed to
+.Xr ssh 1
+unchanged, so jump hosts, custom ports, control masters and the rest of
+.Xr ssh_config 5
+work as usual.
+Use
+.Fl -
+to separate
+.Nm
+options from
+.Xr ssh 1
+options that would otherwise be misread.
+.Pp
+Capturing the screen on the remote host needs
+.Dv CAP_SYS_ADMIN ,
+that is root.
+If logging in as root is not possible, one of
+.Fl a ,
+.Fl s
+or
+.Fl u
+runs the agent under a privilege escalation tool instead.
+.Pp
+The options are as follows:
+.Bl -tag -width Ds
+.It Fl B Ar rate
+Cap the video bitrate at
+.Ar rate ,
+in the notation understood by
+.Xr ffmpeg 1
+such as
+.Ql 4M
+or
+.Ql 800k .
+Defaults to
+.Ql 10M .
+.It Fl C Ar crtc
+Capture only the CRTC with the DRM object id
+.Ar crtc .
+By default the agent captures the first primary plane that has a framebuffer
+attached, on whichever CRTC it sits.
+.It Fl F
+Start in fullscreen mode.
+The same state can be toggled during the session with the hotkey described in
+.Sx HOTKEYS .
+.It Fl P Ar plane
+Capture the plane with the DRM object id
+.Ar plane ,
+skipping the search described under
+.Fl C .
+.It Fl a
+Run the agent under
+.Ql doas -n .
+.Xr doas 1
+must be configured to allow
+.Ql python3
+without a password.
+.It Fl d Ar device
+Capture the DRM device
+.Ar device
+on the remote host.
+Defaults to
+.Pa /dev/dri/card0 .
+.It Fl e Ar encoder
+Force the
+.Xr ffmpeg 1
+encoder
+.Ar encoder
+on the remote host and skip the automatic search.
+See
+.Sx ENCODERS
+for the known names.
+.It Fl f Ar fps
+Capture
+.Ar fps
+frames per second.
+Defaults to 30.
+.It Fl m Ar WxH
+Scale the captured image down so that it fits into
+.Ar W
+by
+.Ar H
+pixels, keeping the aspect ratio.
+Either side may be left out, and 0 means no limit on that side:
+.Ql 1280x
+caps only the width and
+.Ql 0x0
+disables the cap altogether.
+Defaults to the resolution of the local display.
+.It Fl s
+Run the agent under
+.Ql sudo -S .
+.It Fl u
+Run the agent under
+.Ql su -T .
+.It Fl h
+Show the help message
+.El
+.Sh HOTKEYS
+Every key press is forwarded to the remote host, so
+.Nm
+hides its own commands behind a prefix: tap the left Alt key twice within
+half a second, then press the command key within the next two seconds.
+The prefix taps are forwarded to the remote host like any other key.
+.Bl -tag -width "LAlt LAlt F"
+.It LAlt LAlt F
+Toggle fullscreen mode, the same state as
+.Fl F .
+.El
+.Sh ENCODERS
+Unless
+.Fl e
+is given, the remote host tries the following encoders in turn and keeps the
+first one that produces a frame:
+.Bl -tag -width h264_v4l2m2m -compact
+.It h264_vaapi
+AMD and Intel GPUs through VA-API.
+.It h264_nvenc
+NVIDIA GPUs.
+.It h264_v4l2m2m
+Raspberry Pi and other V4L2 memory-to-memory encoders.
+.It libx264
+Software encoding on the CPU.
+.El
+.Sh REQUIREMENTS
+On the remote host:
+.Bl -bullet -compact
+.It
+.Xr sshd 8
+accepting the login.
+.It
+.Xr python3 1
+and
+.Xr ffmpeg 1 .
+.It
+.Pa libEGL ,
+.Pa libGLESv2
+and
+.Pa libgbm ,
+which ship with every GPU driver.
+.It
+.Dv CAP_SYS_ADMIN ,
+that is a root login or one of
+.Fl a ,
+.Fl s
+or
+.Fl u .
+.It
+A connected screen or an HDMI dummy plug, so that a framebuffer is being
+scanned out.
+.El
+.Pp
+On the local host only
+.Xr ssh 1
+and
+.Nm
+are needed.
+.Sh EXIT STATUS
+.Nm
+exits 0 when the window is closed, and 1 when the connection, the remote
+agent or the local video pipeline fails.
+If it is interrupted by a signal while prompting for a password it exits with
+128 plus the signal number.
+.Sh EXAMPLES
+Connect to a host as root:
+.Pp
+.Dl scrssh root@example.com
+.Pp
+Connect as an unprivileged user and let
+.Xr sudo 8
+elevate the agent:
+.Pp
+.Dl scrssh -s user@example.com
+.Pp
+Pass a port and a jump host through to
+.Xr ssh 1 :
+.Pp
+.Dl scrssh -s \-\- -p 2222 -J user@jumphost.example.com user@example.com
+.Pp
+Force the software encoder, capture at 15 frames per second and keep the
+stream below 2 Mbit/s:
+.Pp
+.Dl scrssh -e libx264 -f 15 -B 2M root@example.com
+.Pp
+Capture the second GPU and scale the picture down to at most 1280 pixels
+wide:
+.Pp
+.Dl scrssh -d /dev/dri/card1 -m 1280x root@example.com
+.Sh DIAGNOSTICS
+.Bl -tag -width Ds
+.It the framebuffer is not accessible; capturing needs root
+.It the remote stream contains no video
+The remote agent is not running as root.
+Log in as root or add one of
+.Fl a ,
+.Fl s
+or
+.Fl u .
+If it already runs as root, the remote host may lack
+.Xr ffmpeg 1
+or the EGL libraries; the message printed before this one names the missing
+piece.
+.It the remote video stream ended
+The agent stopped sending frames.
+Either the remote screen went blank for more than a second, for example
+because the display turned off, or the
+.Xr ssh 1
+connection or the remote
+.Xr ffmpeg 1
+died.
+Check the display and reconnect.
+.It the remote agent did not start
+The privilege escalation tool refused to run the agent, for example because
+.Xr doas 1
+asked for a password that
+.Fl a
+cannot supply.
+Fix the remote configuration or use
+.Fl s .
+.El
+.Sh SEE ALSO
+.Xr doas 1 ,
+.Xr ffmpeg 1 ,
+.Xr ssh 1 ,
+.Xr su 1 ,
+.Xr ssh_config 5 ,
+.Xr sudo 8
+.Pp
+.Lk https://codeberg.org/Gottox/scrssh
+.Sh AUTHORS
+.An Enno Boland Aq Mt g@s01.de
+.Sh CAVEATS
+Only one screen is captured at a time; pick it with
+.Fl C
+when the remote host has several.
+The agent wakes a blanked screen only when it starts; a display that turns
+off during the session ends it.

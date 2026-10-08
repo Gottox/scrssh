@@ -49,3 +49,5 @@ executable(
     ],
     install: true,
 )
+
+install_man('scrssh.1')

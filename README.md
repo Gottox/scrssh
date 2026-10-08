@@ -109,15 +109,16 @@ or add `-s` to run the agent under `sudo`.
 > the remote video stream ended
 > ```
 
-The screen changed its resolution; scrssh does not support mode switches
-during a session.
+The agent stopped sending frames. Either the remote screen went blank for
+more than a second, for example because the display turned off, or the SSH
+connection or the remote ffmpeg died. Check the display and reconnect.
 
 > ```
 > doas: Authentication required
 > the remote agent did not start
 > ```
 
-When using `-a` make sure `doas` on the remote host is configure to permit the
+When using `-a` make sure `doas` on the remote host is configured to permit the
 `python3` command without prompting for a password or, preferably, use `-s` to use `sudo`
 escalation instead.
 
